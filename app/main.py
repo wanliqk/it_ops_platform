@@ -9,7 +9,7 @@ from app.core.responses import MobileAPIException, error_response
 
 CORS_ALLOW_ORIGINS = [
     "http://localhost:5173",
-    "http://192.168.188.32:5173",
+    "http://127.0.0.1:5173",
 ]
 
 
