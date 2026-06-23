@@ -31,6 +31,10 @@ JWT Token 认证
 
 ```text
 sys_user              用户表
+sys_role              角色表
+sys_permission        权限表
+sys_user_role         用户角色关联表
+sys_role_permission   角色权限关联表
 it_asset_category     资产分类表
 it_asset              资产表
 it_ticket             报修工单表
@@ -149,13 +153,21 @@ Authorization: Bearer <access_token>
 
 # 3. 枚举值定义
 
-## 3.1 用户角色 role
+## 3.1 用户兼容角色 role
+
+`sys_user.role` 为兼容字段，创建和查询用户时仍会返回该字段。
+
+后端接口权限判断不再直接依赖 `sys_user.role`，必须基于 RBAC 表：
+
+```text
+sys_user -> sys_user_role -> sys_role -> sys_role_permission -> sys_permission
+```
 
 | 值        | 说明      |
 | -------- | ------- |
-| admin    | 管理员     |
-| it_staff | IT 运维人员 |
-| employee | 普通员工    |
+| admin    | 管理员兼容值  |
+| it_staff | IT 运维兼容值 |
+| employee | 普通员工兼容值 |
 
 ---
 
@@ -240,9 +252,62 @@ Authorization: Bearer <access_token>
 
 ---
 
-# 4. 权限规则
+# 4. RBAC 权限规则
 
-## 4.1 普通员工 employee
+## 4.1 权限模型
+
+后端统一通过 `permission_code` 做强制权限校验，前端只可根据 `/api/v1/auth/me`
+返回的权限码控制页面展示，不能替代后端校验。
+
+核心数据表：
+
+| 表名                  | 说明       |
+| ------------------- | -------- |
+| sys_role            | 角色表      |
+| sys_permission      | 权限表      |
+| sys_user_role       | 用户角色关联表  |
+| sys_role_permission | 角色权限关联表  |
+
+权限判断链路：
+
+```text
+当前登录用户 -> 用户角色 -> 启用状态角色 -> 角色权限 -> 启用状态权限 -> permission_code
+```
+
+`sys_user.role` 仅用于兼容旧数据展示，不作为接口授权依据。
+
+## 4.2 常用权限码
+
+| 模块     | 权限码                                                                 |
+| ------ | ------------------------------------------------------------------- |
+| 用户管理   | user:view、user:create、user:update、user:status、user:reset_password、user:delete |
+| 角色权限管理 | role:view、role:create、role:update、role:delete、role:assign_permission、permission:view、user:assign_role |
+| 资产分类管理 | asset_category:view、asset_category:create、asset_category:update、asset_category:delete |
+| 资产管理   | asset:view、asset:create、asset:update、asset:status、asset:delete、asset:repair_records |
+| 工单管理   | ticket:create、ticket:view_all、ticket:view_self、ticket:update、ticket:assign、ticket:start、ticket:complete、ticket:cancel、ticket:delete、ticket:records |
+| 维修记录   | repair_record:view、repair_record:update |
+| FAQ 管理 | faq:view、faq:create、faq:update、faq:status、faq:delete、faq:stats |
+| 操作日志   | operation_log:view |
+| 首页看板   | dashboard:view |
+| 字典     | dict:view |
+
+## 4.3 数据范围规则
+
+工单数据范围和操作范围必须由后端控制：
+
+```text
+1. 拥有 ticket:view_all 的用户可以查看全部工单；
+2. 只有 ticket:view_self 的用户只能查看 reporter_id = 当前用户ID 的工单；
+3. 普通员工只能修改和取消自己创建且 status = pending 的工单；
+4. IT 运维人员只能完成分配给自己的工单；
+5. RBAC 角色码包含 admin 的用户可以操作全部数据。
+```
+
+## 4.4 默认角色示例
+
+以下角色只是初始化数据示例，实际权限以 RBAC 分配结果为准。
+
+### 普通员工 employee
 
 允许：
 
@@ -268,7 +333,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-## 4.2 IT 运维人员 it_staff
+### IT 运维人员 it_staff
 
 允许：
 
@@ -296,7 +361,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-## 4.3 管理员 admin
+### 管理员 admin
 
 允许：
 
@@ -386,6 +451,8 @@ GET /api/v1/auth/me
 
 权限：登录用户
 
+返回当前用户基础信息、RBAC 角色编码列表和权限编码列表。
+
 成功响应：
 
 ```json
@@ -401,7 +468,17 @@ GET /api/v1/auth/me
     "phone": "13800000001",
     "email": "admin@example.com",
     "status": 1,
-    "created_at": "2026-06-21 08:00:00"
+    "created_at": "2026-06-21 08:00:00",
+    "updated_at": "2026-06-21 08:00:00",
+    "roles": [
+      "admin"
+    ],
+    "permissions": [
+      "user:view",
+      "role:view",
+      "ticket:view_all",
+      "asset:view"
+    ]
   }
 }
 ```
@@ -460,7 +537,7 @@ PUT /api/v1/auth/password
 GET /api/v1/users
 ```
 
-权限：admin
+权限：user:view
 
 查询参数：
 
@@ -515,7 +592,7 @@ GET /api/v1/users?keyword=张&role=it_staff&page=1&page_size=10
 POST /api/v1/users
 ```
 
-权限：admin
+权限：user:create
 
 请求参数：
 
@@ -568,7 +645,7 @@ POST /api/v1/users
 GET /api/v1/users/{user_id}
 ```
 
-权限：admin
+权限：user:view
 
 路径参数：
 
@@ -605,7 +682,7 @@ GET /api/v1/users/{user_id}
 PUT /api/v1/users/{user_id}
 ```
 
-权限：admin
+权限：user:update
 
 请求参数：
 
@@ -646,7 +723,7 @@ PUT /api/v1/users/{user_id}
 PATCH /api/v1/users/{user_id}/status
 ```
 
-权限：admin
+权限：user:status
 
 请求参数：
 
@@ -682,7 +759,7 @@ PATCH /api/v1/users/{user_id}/status
 PATCH /api/v1/users/{user_id}/password
 ```
 
-权限：admin
+权限：user:reset_password
 
 请求参数：
 
@@ -710,7 +787,7 @@ PATCH /api/v1/users/{user_id}/password
 DELETE /api/v1/users/{user_id}
 ```
 
-权限：admin
+权限：user:delete
 
 成功响应：
 
@@ -740,7 +817,7 @@ DELETE /api/v1/users/{user_id}
 GET /api/v1/asset-categories
 ```
 
-权限：admin、it_staff
+权限：asset_category:view
 
 查询参数：
 
@@ -775,7 +852,7 @@ GET /api/v1/asset-categories
 POST /api/v1/asset-categories
 ```
 
-权限：admin
+权限：asset_category:create
 
 请求参数：
 
@@ -816,7 +893,7 @@ POST /api/v1/asset-categories
 GET /api/v1/asset-categories/{category_id}
 ```
 
-权限：admin、it_staff
+权限：asset_category:view
 
 成功响应：
 
@@ -844,7 +921,7 @@ GET /api/v1/asset-categories/{category_id}
 PUT /api/v1/asset-categories/{category_id}
 ```
 
-权限：admin
+权限：asset_category:update
 
 请求参数：
 
@@ -875,7 +952,7 @@ PUT /api/v1/asset-categories/{category_id}
 DELETE /api/v1/asset-categories/{category_id}
 ```
 
-权限：admin
+权限：asset_category:delete
 
 成功响应：
 
@@ -905,7 +982,7 @@ DELETE /api/v1/asset-categories/{category_id}
 GET /api/v1/assets
 ```
 
-权限：admin、it_staff
+权限：asset:view
 
 查询参数：
 
@@ -967,7 +1044,7 @@ GET /api/v1/assets?keyword=电脑&status=in_use&page=1&page_size=10
 POST /api/v1/assets
 ```
 
-权限：admin
+权限：asset:create
 
 请求参数：
 
@@ -1020,7 +1097,7 @@ POST /api/v1/assets
 GET /api/v1/assets/{asset_id}
 ```
 
-权限：admin、it_staff
+权限：asset:view
 
 成功响应：
 
@@ -1059,7 +1136,7 @@ GET /api/v1/assets/{asset_id}
 PUT /api/v1/assets/{asset_id}
 ```
 
-权限：admin
+权限：asset:update
 
 请求参数：
 
@@ -1106,7 +1183,7 @@ PUT /api/v1/assets/{asset_id}
 PATCH /api/v1/assets/{asset_id}/status
 ```
 
-权限：admin、it_staff
+权限：asset:status
 
 请求参数：
 
@@ -1144,7 +1221,7 @@ PATCH /api/v1/assets/{asset_id}/status
 DELETE /api/v1/assets/{asset_id}
 ```
 
-权限：admin
+权限：asset:delete
 
 成功响应：
 
@@ -1172,7 +1249,7 @@ DELETE /api/v1/assets/{asset_id}
 GET /api/v1/assets/{asset_id}/repair-records
 ```
 
-权限：admin、it_staff
+权限：asset:repair_records
 
 成功响应：
 
@@ -1208,7 +1285,7 @@ GET /api/v1/assets/{asset_id}/repair-records
 GET /api/v1/tickets
 ```
 
-权限：admin、it_staff、employee
+权限：ticket:view_all 或 ticket:view_self
 
 查询参数：
 
@@ -1229,9 +1306,9 @@ GET /api/v1/tickets
 权限过滤规则：
 
 ```text
-1. admin 可以查看全部工单；
-2. it_staff 可以查看全部工单；
-3. employee 只能查看 reporter_id = 当前用户ID 的工单。
+1. 拥有 ticket:view_all 的用户可以查看全部工单；
+2. 只有 ticket:view_self 的用户只能查看 reporter_id = 当前用户ID 的工单；
+3. 同时拥有 ticket:view_all 与 ticket:view_self 时，以 ticket:view_all 为准。
 ```
 
 请求示例：
@@ -1282,7 +1359,7 @@ GET /api/v1/tickets?status=pending&page=1&page_size=10
 POST /api/v1/tickets
 ```
 
-权限：employee、admin、it_staff
+权限：ticket:create
 
 请求参数：
 
@@ -1339,7 +1416,7 @@ POST /api/v1/tickets
 GET /api/v1/tickets/{ticket_id}
 ```
 
-权限：admin、it_staff、工单报修人本人
+权限：ticket:view_all 或 ticket:view_self
 
 成功响应：
 
@@ -1404,7 +1481,7 @@ GET /api/v1/tickets/{ticket_id}
 PUT /api/v1/tickets/{ticket_id}
 ```
 
-权限：admin、工单报修人本人
+权限：ticket:update
 
 请求参数：
 
@@ -1431,9 +1508,9 @@ PUT /api/v1/tickets/{ticket_id}
 业务规则：
 
 ```text
-1. 只有 pending 状态的工单允许报修人修改；
-2. admin 可以修改 pending、assigned 状态工单；
-3. processing、completed、cancelled 状态不允许修改基础信息；
+1. 非 admin 用户只能修改自己创建且 status = pending 的工单；
+2. RBAC 角色码包含 admin 的用户可以修改全部工单；
+3. processing、completed、cancelled 状态下，非 admin 用户不允许修改基础信息；
 4. 修改后记录操作日志。
 ```
 
@@ -1445,7 +1522,7 @@ PUT /api/v1/tickets/{ticket_id}
 PATCH /api/v1/tickets/{ticket_id}/assign
 ```
 
-权限：admin
+权限：ticket:assign
 
 请求参数：
 
@@ -1491,7 +1568,7 @@ PATCH /api/v1/tickets/{ticket_id}/assign
 PATCH /api/v1/tickets/{ticket_id}/start
 ```
 
-权限：admin、it_staff
+权限：ticket:start
 
 请求参数：
 
@@ -1519,8 +1596,8 @@ PATCH /api/v1/tickets/{ticket_id}/start
 
 ```text
 1. assigned 状态允许开始处理；
-2. it_staff 只能开始处理分配给自己的工单；
-3. admin 可以开始处理任意 assigned 工单；
+2. 非 admin 用户只能开始处理分配给自己的工单；
+3. RBAC 角色码包含 admin 的用户可以开始处理任意 assigned 工单；
 4. 如果工单 handler_id 为空，IT 人员开始处理时自动设置 handler_id = 当前用户ID；
 5. 开始处理后 status = processing；
 6. 更新 started_at；
@@ -1537,7 +1614,7 @@ PATCH /api/v1/tickets/{ticket_id}/start
 PATCH /api/v1/tickets/{ticket_id}/complete
 ```
 
-权限：admin、工单处理人本人
+权限：ticket:complete
 
 请求参数：
 
@@ -1583,8 +1660,8 @@ PATCH /api/v1/tickets/{ticket_id}/complete
 
 ```text
 1. 只有 processing 状态允许完成；
-2. it_staff 只能完成自己处理的工单；
-3. admin 可以完成任意 processing 工单；
+2. 非 admin 用户只能完成分配给自己的工单；
+3. RBAC 角色码包含 admin 的用户可以完成任意 processing 工单；
 4. 完成后 status = completed；
 5. 更新 result、completed_at；
 6. 如果工单关联 asset_id：
@@ -1605,7 +1682,7 @@ PATCH /api/v1/tickets/{ticket_id}/complete
 PATCH /api/v1/tickets/{ticket_id}/cancel
 ```
 
-权限：admin、工单报修人本人
+权限：ticket:cancel
 
 请求参数：
 
@@ -1631,8 +1708,8 @@ PATCH /api/v1/tickets/{ticket_id}/cancel
 业务规则：
 
 ```text
-1. 只有 pending 状态允许报修人取消；
-2. admin 可以取消 pending、assigned 状态工单；
+1. 非 admin 用户只能取消自己创建且 status = pending 的工单；
+2. RBAC 角色码包含 admin 的用户可以取消 pending、assigned 状态工单；
 3. processing、completed 状态不允许取消；
 4. 取消后 status = cancelled；
 5. 写入 it_ticket_record，action = cancel；
@@ -1647,7 +1724,7 @@ PATCH /api/v1/tickets/{ticket_id}/cancel
 DELETE /api/v1/tickets/{ticket_id}
 ```
 
-权限：admin
+权限：ticket:delete
 
 成功响应：
 
@@ -1678,7 +1755,7 @@ DELETE /api/v1/tickets/{ticket_id}
 GET /api/v1/tickets/{ticket_id}/records
 ```
 
-权限：admin、it_staff、工单报修人本人
+权限：ticket:records，并且需要满足工单数据范围
 
 成功响应：
 
@@ -1730,7 +1807,7 @@ GET /api/v1/tickets/{ticket_id}/records
 GET /api/v1/repair-records
 ```
 
-权限：admin、it_staff
+权限：repair_record:view
 
 查询参数：
 
@@ -1794,7 +1871,7 @@ GET /api/v1/repair-records
 GET /api/v1/repair-records/{record_id}
 ```
 
-权限：admin、it_staff
+权限：repair_record:view
 
 成功响应：
 
@@ -1829,7 +1906,7 @@ GET /api/v1/repair-records/{record_id}
 PUT /api/v1/repair-records/{record_id}
 ```
 
-权限：admin
+权限：repair_record:update
 
 请求参数：
 
@@ -1863,7 +1940,7 @@ PUT /api/v1/repair-records/{record_id}
 GET /api/v1/operation-logs
 ```
 
-权限：admin
+权限：operation_log:view
 
 查询参数：
 
@@ -1928,7 +2005,7 @@ GET /api/v1/operation-logs
 GET /api/v1/dashboard/summary
 ```
 
-权限：admin、it_staff
+权限：dashboard:view
 
 成功响应：
 
@@ -1970,7 +2047,7 @@ asset_scrapped：scrapped 状态资产数量
 GET /api/v1/dashboard/ticket-trend
 ```
 
-权限：admin、it_staff
+权限：dashboard:view
 
 查询参数：
 
@@ -2015,7 +2092,7 @@ GET /api/v1/dashboard/ticket-trend
 GET /api/v1/dashboard/ticket-fault-types
 ```
 
-权限：admin、it_staff
+权限：dashboard:view
 
 成功响应：
 
@@ -2046,7 +2123,7 @@ GET /api/v1/dashboard/ticket-fault-types
 GET /api/v1/dashboard/asset-status
 ```
 
-权限：admin、it_staff
+权限：dashboard:view
 
 成功响应：
 
@@ -2077,7 +2154,7 @@ GET /api/v1/dashboard/asset-status
 GET /api/v1/dashboard/handler-ranking
 ```
 
-权限：admin、it_staff
+权限：dashboard:view
 
 查询参数：
 
@@ -2127,7 +2204,7 @@ it_faq
 GET /api/v1/faqs
 ```
 
-权限：admin、it_staff、employee
+权限：faq:view
 
 查询参数：
 
@@ -2201,7 +2278,7 @@ GET /api/v1/faqs?keyword=打印机&category=printer&page=1&page_size=10
 POST /api/v1/faqs
 ```
 
-权限：admin
+权限：faq:create
 
 请求参数：
 
@@ -2258,7 +2335,7 @@ POST /api/v1/faqs
 GET /api/v1/faqs/{faq_id}
 ```
 
-权限：admin、it_staff、employee
+权限：faq:view
 
 成功响应：
 
@@ -2299,7 +2376,7 @@ GET /api/v1/faqs/{faq_id}
 PUT /api/v1/faqs/{faq_id}
 ```
 
-权限：admin
+权限：faq:update
 
 请求参数：
 
@@ -2342,7 +2419,7 @@ PUT /api/v1/faqs/{faq_id}
 PATCH /api/v1/faqs/{faq_id}/status
 ```
 
-权限：admin
+权限：faq:status
 
 请求参数：
 
@@ -2380,7 +2457,7 @@ PATCH /api/v1/faqs/{faq_id}/status
 DELETE /api/v1/faqs/{faq_id}
 ```
 
-权限：admin
+权限：faq:delete
 
 成功响应：
 
@@ -2409,7 +2486,7 @@ DELETE /api/v1/faqs/{faq_id}
 GET /api/v1/faqs/category-stats
 ```
 
-权限：admin、it_staff、employee
+权限：faq:stats
 
 成功响应：
 
@@ -2467,7 +2544,7 @@ GET /api/v1/faqs/category-stats
 GET /api/v1/dicts
 ```
 
-权限：登录用户
+权限：dict:view
 
 成功响应：
 
@@ -2602,7 +2679,317 @@ GET /api/v1/dicts
 
 ---
 
-# 16. 工单状态流转规则
+# 16. RBAC 权限管理 API
+
+RBAC 管理接口用于维护角色、查看权限、分配角色权限和分配用户角色。
+
+所有角色、权限、用户角色、角色权限相关操作都会写入 `sys_operation_log`。
+
+## 16.1 查询角色列表
+
+```http
+GET /api/v1/roles
+```
+
+权限：role:view
+
+查询参数：
+
+| 参数        | 类型     | 必填 | 说明          |
+| --------- | ------ | -- | ----------- |
+| keyword   | string | 否  | 角色编码或名称模糊查询 |
+| status    | int    | 否  | 1启用，0停用     |
+| page      | int    | 否  | 页码          |
+| page_size | int    | 否  | 每页数量        |
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "role_code": "admin",
+        "role_name": "系统管理员",
+        "description": "拥有系统全部权限",
+        "sort_order": 1,
+        "status": 1,
+        "created_at": "2026-06-23 17:18:35",
+        "updated_at": "2026-06-23 17:18:35"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 100,
+    "pages": 1
+  }
+}
+```
+
+---
+
+## 16.2 创建角色
+
+```http
+POST /api/v1/roles
+```
+
+权限：role:create
+
+请求参数：
+
+```json
+{
+  "role_code": "asset_manager",
+  "role_name": "资产管理员",
+  "description": "负责资产台账维护",
+  "sort_order": 4,
+  "status": 1
+}
+```
+
+业务规则：
+
+```text
+1. role_code 不允许重复；
+2. status 只能为 1 或 0；
+3. 创建成功后记录操作日志。
+```
+
+---
+
+## 16.3 查询角色详情
+
+```http
+GET /api/v1/roles/{role_id}
+```
+
+权限：role:view
+
+---
+
+## 16.4 修改角色
+
+```http
+PUT /api/v1/roles/{role_id}
+```
+
+权限：role:update
+
+请求参数：
+
+```json
+{
+  "role_name": "资产管理员",
+  "description": "负责资产台账维护和状态变更",
+  "sort_order": 4,
+  "status": 1
+}
+```
+
+---
+
+## 16.5 修改角色状态
+
+```http
+PATCH /api/v1/roles/{role_id}/status
+```
+
+权限：role:update
+
+请求参数：
+
+```json
+{
+  "status": 0
+}
+```
+
+---
+
+## 16.6 删除角色
+
+```http
+DELETE /api/v1/roles/{role_id}
+```
+
+权限：role:delete
+
+业务规则：
+
+```text
+1. 角色不存在，返回 404；
+2. 角色已关联用户或权限时，不允许删除；
+3. 删除成功后记录操作日志。
+```
+
+---
+
+## 16.7 查询权限列表
+
+```http
+GET /api/v1/permissions
+```
+
+权限：permission:view
+
+查询参数：
+
+| 参数          | 类型     | 必填 | 说明           |
+| ----------- | ------ | -- | ------------ |
+| keyword     | string | 否  | 权限编码或名称模糊查询 |
+| module_name | string | 否  | 模块名称         |
+| status      | int    | 否  | 1启用，0停用      |
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": 40,
+      "permission_code": "ticket:view_all",
+      "permission_name": "查看全部工单",
+      "module_name": "工单管理",
+      "permission_type": "api",
+      "api_method": "GET",
+      "api_path": "/api/v1/tickets",
+      "description": "查看全部工单",
+      "sort_order": 40,
+      "status": 1,
+      "created_at": "2026-06-23 17:18:49",
+      "updated_at": "2026-06-23 17:18:49"
+    }
+  ]
+}
+```
+
+---
+
+## 16.8 查询分组权限
+
+```http
+GET /api/v1/permissions/grouped
+```
+
+权限：permission:view
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "module_name": "工单管理",
+      "permissions": [
+        {
+          "id": 40,
+          "permission_code": "ticket:view_all",
+          "permission_name": "查看全部工单",
+          "module_name": "工单管理",
+          "permission_type": "api",
+          "api_method": "GET",
+          "api_path": "/api/v1/tickets",
+          "description": "查看全部工单",
+          "sort_order": 40,
+          "status": 1,
+          "created_at": "2026-06-23 17:18:49",
+          "updated_at": "2026-06-23 17:18:49"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## 16.9 查询角色权限
+
+```http
+GET /api/v1/roles/{role_id}/permissions
+```
+
+权限：role:view
+
+成功响应：返回该角色已绑定的权限列表。
+
+---
+
+## 16.10 分配角色权限
+
+```http
+PUT /api/v1/roles/{role_id}/permissions
+```
+
+权限：role:assign_permission
+
+请求参数：
+
+```json
+{
+  "permission_ids": [40, 41, 42, 47]
+}
+```
+
+业务规则：
+
+```text
+1. role_id 必须存在；
+2. permission_ids 中的权限必须全部存在；
+3. 后端先删除该角色旧权限，再插入新权限；
+4. 分配成功后记录操作日志。
+```
+
+---
+
+## 16.11 查询用户角色
+
+```http
+GET /api/v1/users/{user_id}/roles
+```
+
+权限：user:view 或 user:assign_role
+
+成功响应：返回用户已绑定的角色列表。
+
+---
+
+## 16.12 分配用户角色
+
+```http
+PUT /api/v1/users/{user_id}/roles
+```
+
+权限：user:assign_role
+
+请求参数：
+
+```json
+{
+  "role_ids": [3]
+}
+```
+
+业务规则：
+
+```text
+1. user_id 必须存在；
+2. role_ids 中的角色必须全部存在；
+3. 后端先删除该用户旧角色，再插入新角色；
+4. 分配成功后记录操作日志。
+```
+
+---
+
+# 17. 工单状态流转规则
 
 工单状态只能按照以下规则流转：
 
@@ -2636,9 +3023,9 @@ processing -> cancelled
 
 ---
 
-# 17. 后端实现要求
+# 18. 后端实现要求
 
-## 17.1 FastAPI 路由建议
+## 18.1 FastAPI 路由建议
 
 建议拆分以下 router：
 
@@ -2653,11 +3040,12 @@ app/api/v1/routers/operation_logs.py
 app/api/v1/routers/dashboard.py
 app/api/v1/routers/dicts.py
 app/api/v1/routers/faqs.py
+app/routers/rbac.py
 ```
 
 ---
 
-## 17.2 Service 层建议
+## 18.2 Service 层建议
 
 建议拆分以下 service：
 
@@ -2670,11 +3058,12 @@ app/services/repair_service.py
 app/services/log_service.py
 app/services/dashboard_service.py
 app/services/faq_service.py
+app/services/rbac_service.py
 ```
 
 ---
 
-## 17.3 数据模型建议
+## 18.3 数据模型建议
 
 建议拆分以下 model：
 
@@ -2687,11 +3076,12 @@ app/models/ticket_record.py
 app/models/repair_record.py
 app/models/operation_log.py
 app/models/faq.py
+app/models/rbac.py
 ```
 
 ---
 
-## 17.4 Pydantic Schema 建议
+## 18.4 Pydantic Schema 建议
 
 建议拆分以下 schema：
 
@@ -2703,11 +3093,12 @@ app/schemas/ticket_schema.py
 app/schemas/repair_schema.py
 app/schemas/common_schema.py
 app/schemas/faq_schema.py
+app/schemas/rbac_schema.py
 ```
 
 ---
 
-## 17.5 统一响应工具
+## 18.5 统一响应工具
 
 请封装统一响应方法：
 
@@ -2729,25 +3120,34 @@ def fail(code=40000, message="操作失败", data=None):
 
 ---
 
-## 17.6 权限校验要求
+## 18.6 权限校验要求
 
 需要实现依赖函数：
 
 ```text
 get_current_user
-require_roles
+get_user_permission_codes
+require_permissions
 ```
 
 示例：
 
 ```text
-require_roles("admin")
-require_roles("admin", "it_staff")
+require_permissions("user:view")
+require_permissions("ticket:view_all", "ticket:view_self", require_all=False)
+```
+
+兼容说明：
+
+```text
+sys_user.role 可以继续作为用户基础信息字段返回；
+业务接口授权必须基于 RBAC 表查询得到的 permission_code；
+如需识别 admin 全量数据操作能力，应从 sys_user_role / sys_role 查询角色编码，不读取 sys_user.role。
 ```
 
 ---
 
-## 17.7 操作日志要求
+## 18.7 操作日志要求
 
 以下操作必须写入 sys_operation_log：
 
@@ -2770,6 +3170,15 @@ require_roles("admin", "it_staff")
 修改 FAQ
 修改 FAQ 状态
 删除 FAQ
+创建角色
+修改角色
+修改角色状态
+删除角色
+查询角色
+查询权限
+分配角色权限
+查询用户角色
+分配用户角色
 ```
 
 日志字段：
