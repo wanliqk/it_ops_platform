@@ -72,6 +72,12 @@ class TicketRead(TicketBase):
     assigned_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
+    sla_response_deadline: datetime | None
+    sla_resolve_deadline: datetime | None
+    first_response_at: datetime | None
+    resolved_at: datetime | None
+    response_overdue: int
+    resolve_overdue: int
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

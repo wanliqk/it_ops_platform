@@ -85,6 +85,12 @@ def ticket_dict(ticket: Any) -> dict[str, Any]:
             "assigned_at",
             "started_at",
             "completed_at",
+            "sla_response_deadline",
+            "sla_resolve_deadline",
+            "first_response_at",
+            "resolved_at",
+            "response_overdue",
+            "resolve_overdue",
             "updated_at",
         ],
     )

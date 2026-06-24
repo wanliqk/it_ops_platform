@@ -2,7 +2,17 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -50,7 +60,11 @@ class RepairResult(StrEnum):
 class Ticket(Base):
     __tablename__ = "it_ticket"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        index=True,
+    )
     ticket_no: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(100))
     description: Mapped[str] = mapped_column(Text)
@@ -73,6 +87,12 @@ class Ticket(Base):
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    sla_response_deadline: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    sla_resolve_deadline: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    first_response_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    response_overdue: Mapped[int] = mapped_column(SmallInteger, default=0)
+    resolve_overdue: Mapped[int] = mapped_column(SmallInteger, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
@@ -97,7 +117,11 @@ class Ticket(Base):
 class TicketRecord(Base):
     __tablename__ = "it_ticket_record"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        index=True,
+    )
     ticket_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("it_ticket.id"))
     operator_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("sys_user.id"))
     from_status: Mapped[str | None] = mapped_column(String(30), default=None)
@@ -113,7 +137,11 @@ class TicketRecord(Base):
 class RepairRecord(Base):
     __tablename__ = "it_repair_record"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        index=True,
+    )
     ticket_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("it_ticket.id"))
     asset_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("it_asset.id"))
     repair_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("sys_user.id"))

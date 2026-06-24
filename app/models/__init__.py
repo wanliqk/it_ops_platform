@@ -3,6 +3,7 @@ from app.models.faq import Faq, FaqCategory
 from app.models.notification import Notification
 from app.models.operation_log import OperationLog, OperationResult
 from app.models.rbac import SysPermission, SysRole, SysRolePermission, SysUserRole
+from app.models.sla_rule import SlaRule
 from app.models.ticket import (
     RepairRecord,
     RepairResult,
@@ -30,6 +31,7 @@ __all__ = [
     "SysRole",
     "SysRolePermission",
     "SysUserRole",
+    "SlaRule",
     "Ticket",
     "TicketAction",
     "TicketFaultType",

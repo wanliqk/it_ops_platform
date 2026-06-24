@@ -24,6 +24,7 @@ from app.schemas.ticket import (
     TicketStart,
     TicketUpdate,
 )
+from app.services.sla_service import SlaService
 from app.utils.permissions import get_user_permission_codes, get_user_role_codes
 
 
@@ -38,6 +39,17 @@ class TicketService:
     def create(self, payload: TicketCreate) -> Ticket:
         data = payload.model_dump()
         data["ticket_no"] = data["ticket_no"] or self._generate_ticket_no()
+        created_at = datetime.now(UTC)
+        data["created_at"] = created_at
+        sla_response_deadline, sla_resolve_deadline = SlaService(
+            self.db
+        ).calculate_ticket_sla_deadline(
+            created_at=created_at,
+            ticket_category=self._enum_value(data.get("fault_type")),
+            priority=self._enum_value(data.get("priority")) or "normal",
+        )
+        data["sla_response_deadline"] = sla_response_deadline
+        data["sla_resolve_deadline"] = sla_resolve_deadline
         ticket = Ticket(**data)
         self.db.add(ticket)
         self.db.flush()
@@ -112,6 +124,7 @@ class TicketService:
             setattr(ticket, field, value)
 
         if payload.status is not None and payload.status != before_status:
+            self._apply_sla_flow_timestamps(ticket, payload.status, datetime.now(UTC))
             self.db.add(
                 TicketRecord(
                     ticket_id=ticket.id,
@@ -134,7 +147,9 @@ class TicketService:
         self._ensure_status(ticket.status, TicketStatus.PENDING)
         ticket.handler_id = payload.handler_id
         ticket.status = TicketStatus.ASSIGNED
-        ticket.assigned_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        ticket.assigned_at = now
+        self._apply_sla_flow_timestamps(ticket, TicketStatus.ASSIGNED, now)
         self._add_record(
             ticket,
             operator_id,
@@ -157,7 +172,9 @@ class TicketService:
         if ticket.handler_id is None:
             ticket.handler_id = operator.id
         ticket.status = TicketStatus.PROCESSING
-        ticket.started_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        ticket.started_at = now
+        self._apply_sla_flow_timestamps(ticket, TicketStatus.PROCESSING, now)
         self._add_record(
             ticket,
             operator.id,
@@ -181,6 +198,7 @@ class TicketService:
         ticket.status = TicketStatus.COMPLETED
         ticket.result = payload.result
         ticket.completed_at = now
+        ticket.resolved_at = now
         if ticket.asset_id is not None:
             repair_user_id = ticket.handler_id or operator.id
             self.db.add(
@@ -298,6 +316,25 @@ class TicketService:
     def _ensure_status(self, current: TicketStatus, expected: TicketStatus) -> None:
         if current != expected:
             raise TicketConflictError
+
+    def _apply_sla_flow_timestamps(
+        self,
+        ticket: Ticket,
+        status: TicketStatus,
+        now: datetime,
+    ) -> None:
+        if (
+            status in {TicketStatus.ASSIGNED, TicketStatus.PROCESSING}
+            and ticket.first_response_at is None
+        ):
+            ticket.first_response_at = now
+        if status == TicketStatus.COMPLETED:
+            ticket.resolved_at = now
+
+    def _enum_value(self, value: object) -> str | None:
+        if value is None:
+            return None
+        return getattr(value, "value", str(value))
 
     def _add_record(
         self,
