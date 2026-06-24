@@ -19,6 +19,7 @@ SQLAlchemy
 Pydantic
 MySQL 8.0
 JWT Token 认证
+APScheduler
 ```
 
 接口统一前缀：
@@ -3650,6 +3651,123 @@ sla_resolve_deadline = created_at + resolve_minutes
 
 ---
 
+## 18.7 SLA 超时扫描定时任务
+
+SLA 超时扫描是服务端后台任务，不对前端暴露 HTTP 接口。
+
+调度方式：
+
+```text
+FastAPI 启动时根据配置启动 APScheduler；
+FastAPI 停止时关闭 APScheduler；
+默认每 5 分钟执行一次 check_ticket_sla_timeout。
+```
+
+配置项：
+
+| 配置项                     | 默认值 | 说明                         |
+| ------------------------ | --- | -------------------------- |
+| SCHEDULER_ENABLED        | true | 是否启用 APScheduler 调度器       |
+| SLA_CHECK_INTERVAL_MINUTES | 5 | SLA 超时扫描任务执行间隔，单位分钟 |
+
+任务配置：
+
+```text
+job_id: check_ticket_sla_timeout
+job_name: 检查工单SLA超时
+max_instances: 1
+coalesce: true
+replace_existing: true
+timezone: Asia/Shanghai
+```
+
+扫描范围：
+
+```text
+未完成、未取消的工单；
+当前状态排除 completed、cancelled。
+```
+
+响应超时判断：
+
+```text
+当前时间 > sla_response_deadline
+并且 first_response_at 为空
+并且 response_overdue = 0
+```
+
+满足条件后：
+
+```text
+1. 更新 response_overdue = 1；
+2. 写入站内信通知；
+3. 通过 response_overdue 避免重复发送同类通知。
+```
+
+处理超时判断：
+
+```text
+当前时间 > sla_resolve_deadline
+并且 resolved_at 为空
+并且 resolve_overdue = 0
+```
+
+满足条件后：
+
+```text
+1. 更新 resolve_overdue = 1；
+2. 写入站内信通知；
+3. 通过 resolve_overdue 避免重复发送同类通知。
+```
+
+通知规则：
+
+| 超时类型 | 标题       | 业务类型 | 接收人                         |
+| ------ | -------- | ------ | ---------------------------- |
+| 响应超时 | 工单响应已超时 | ticket | 优先 handler_id，否则 reporter_id |
+| 处理超时 | 工单处理已超时 | ticket | 优先 handler_id，否则 reporter_id |
+
+通知内容示例：
+
+```text
+工单 TK202606230001/办公电脑无法开机 已超过 SLA 响应时间，请尽快处理。
+工单 TK202606230001/办公电脑无法开机 已超过 SLA 处理完成时间，请尽快处理。
+```
+
+日志要求：
+
+```text
+[Scheduler] APScheduler started
+[Scheduler] APScheduler shutdown
+[SLA Job] start checking ticket SLA timeout
+[SLA Job] scanned=20 response_overdue=2 resolve_overdue=1
+[SLA Job] finished
+```
+
+部署说明：
+
+```text
+当前 APScheduler 方案适合单 worker 部署；
+如果生产环境使用多个 worker，需要只在一个进程开启 SCHEDULER_ENABLED，
+或改为独立 scheduler 进程、Celery Beat、分布式锁、数据库锁等方案。
+```
+
+验证方式：
+
+```text
+1. 设置 SCHEDULER_ENABLED=true；
+2. 将 SLA_CHECK_INTERVAL_MINUTES 临时设置为 1；
+3. 启动 FastAPI，观察 APScheduler started 日志；
+4. 构造一个超过 sla_response_deadline 且 first_response_at 为空的未完成工单；
+5. 等待任务执行后确认 response_overdue = 1，并生成站内信；
+6. 构造一个超过 sla_resolve_deadline 且 resolved_at 为空的未完成工单；
+7. 等待任务执行后确认 resolve_overdue = 1，并生成站内信；
+8. 再次执行任务，同一工单同一超时类型不应重复生成通知；
+9. 停止 FastAPI，观察 APScheduler shutdown 日志。
+```
+
+---
+
 # 19. 工单状态流转规则
 
 工单状态只能按照以下规则流转：
@@ -3704,11 +3822,28 @@ app/api/v1/routers/faqs.py
 app/api/v1/routers/notifications.py
 app/api/v1/routers/sla_rules.py
 app/routers/rbac.py
+app/scheduler/scheduler.py
+app/scheduler/jobs.py
 ```
 
 ---
 
-## 20.2 Service 层建议
+## 20.2 定时任务目录建议
+
+建议将 APScheduler 相关代码拆分到独立目录：
+
+```text
+app/scheduler/__init__.py
+app/scheduler/scheduler.py   创建、启动、关闭调度器
+app/scheduler/jobs.py        定时任务入口
+```
+
+不要把大量定时任务逻辑直接写在 `main.py` 中；`main.py` 只负责在 FastAPI
+生命周期中调用 `start_scheduler()` 和 `shutdown_scheduler()`。
+
+---
+
+## 20.3 Service 层建议
 
 建议拆分以下 service：
 
@@ -3728,7 +3863,7 @@ app/services/sla_service.py
 
 ---
 
-## 20.3 数据模型建议
+## 20.4 数据模型建议
 
 建议拆分以下 model：
 
@@ -3748,7 +3883,7 @@ app/models/sla_rule.py
 
 ---
 
-## 20.4 Pydantic Schema 建议
+## 20.5 Pydantic Schema 建议
 
 建议拆分以下 schema：
 
@@ -3767,7 +3902,7 @@ app/schemas/sla_rule_schema.py
 
 ---
 
-## 20.5 统一响应工具
+## 20.6 统一响应工具
 
 请封装统一响应方法：
 
@@ -3789,7 +3924,7 @@ def fail(code=40000, message="操作失败", data=None):
 
 ---
 
-## 20.6 权限校验要求
+## 20.7 权限校验要求
 
 需要实现依赖函数：
 
@@ -3816,7 +3951,40 @@ sys_user.role 可以继续作为用户基础信息字段返回；
 
 ---
 
-## 20.7 操作日志要求
+## 20.8 定时任务配置要求
+
+依赖要求：
+
+```toml
+apscheduler = "^3.10.4"
+```
+
+如果项目使用 PEP 621 格式，也可以写为：
+
+```toml
+"apscheduler>=3.10.4,<4.0.0"
+```
+
+环境变量：
+
+```env
+SCHEDULER_ENABLED=true
+SLA_CHECK_INTERVAL_MINUTES=5
+```
+
+要求：
+
+```text
+1. SCHEDULER_ENABLED=false 时，FastAPI 启动但不启动 APScheduler；
+2. SLA_CHECK_INTERVAL_MINUTES 必须大于 0；
+3. 定时任务必须使用独立数据库 Session；
+4. 不允许在 APScheduler job 中使用 Depends(get_db)；
+5. job 异常必须捕获并记录日志，不能导致调度器停止。
+```
+
+---
+
+## 20.9 操作日志要求
 
 以下操作必须写入 sys_operation_log：
 
