@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import SlaRule, Ticket, TicketStatus
@@ -22,6 +22,8 @@ class SlaTimeoutCheckResult:
     scanned: int
     response_overdue: int
     resolve_overdue: int
+    notification_created: int
+    skipped: int
 
 
 class SlaService:
@@ -137,29 +139,47 @@ class SlaService:
         return PRIORITY_NORMALIZATION.get(priority, priority)
 
     def check_ticket_sla_timeout(self) -> SlaTimeoutCheckResult:
+        logger.info("[SLA Timeout] start checking")
+        now = datetime.now()
+        now_aware = datetime.now(UTC)
         tickets = list(
             self.db.scalars(
-                select(Ticket).where(
-                    Ticket.status.notin_([TicketStatus.COMPLETED, TicketStatus.CANCELLED])
+                select(Ticket)
+                .where(
+                    Ticket.status.notin_([TicketStatus.COMPLETED, TicketStatus.CANCELLED]),
+                    or_(
+                        and_(
+                            Ticket.response_overdue == 0,
+                            Ticket.first_response_at.is_(None),
+                            Ticket.sla_response_deadline.is_not(None),
+                            Ticket.sla_response_deadline < now,
+                        ),
+                        and_(
+                            Ticket.resolve_overdue == 0,
+                            Ticket.resolved_at.is_(None),
+                            Ticket.sla_resolve_deadline.is_not(None),
+                            Ticket.sla_resolve_deadline < now,
+                        ),
+                    ),
                 )
             )
         )
-        now_aware = datetime.now(UTC)
-        now_naive = datetime.now()
         notification_service = NotificationService(self.db)
         response_overdue_count = 0
         resolve_overdue_count = 0
+        notification_created_count = 0
+        skipped_count = 0
 
         for ticket in tickets:
             if (
                 ticket.sla_response_deadline is not None
                 and ticket.first_response_at is None
                 and ticket.response_overdue == 0
-                and self._is_past_deadline(ticket.sla_response_deadline, now_aware, now_naive)
+                and self._is_past_deadline(ticket.sla_response_deadline, now_aware, now)
             ):
                 ticket.response_overdue = 1
                 response_overdue_count += 1
-                self._create_timeout_notification(
+                notification_created = self._create_timeout_notification(
                     notification_service,
                     ticket=ticket,
                     title="工单响应已超时",
@@ -168,16 +188,21 @@ class SlaService:
                         "已超过 SLA 响应时间，请尽快处理。"
                     ),
                 )
+                if notification_created:
+                    notification_created_count += 1
+                else:
+                    skipped_count += 1
+                logger.info("[SLA Timeout] ticket %s response overdue", ticket.id)
 
             if (
                 ticket.sla_resolve_deadline is not None
                 and ticket.resolved_at is None
                 and ticket.resolve_overdue == 0
-                and self._is_past_deadline(ticket.sla_resolve_deadline, now_aware, now_naive)
+                and self._is_past_deadline(ticket.sla_resolve_deadline, now_aware, now)
             ):
                 ticket.resolve_overdue = 1
                 resolve_overdue_count += 1
-                self._create_timeout_notification(
+                notification_created = self._create_timeout_notification(
                     notification_service,
                     ticket=ticket,
                     title="工单处理已超时",
@@ -186,13 +211,31 @@ class SlaService:
                         "已超过 SLA 处理完成时间，请尽快处理。"
                     ),
                 )
+                if notification_created:
+                    notification_created_count += 1
+                else:
+                    skipped_count += 1
+                logger.info("[SLA Timeout] ticket %s resolve overdue", ticket.id)
 
         self.db.flush()
-        return SlaTimeoutCheckResult(
+        result = SlaTimeoutCheckResult(
             scanned=len(tickets),
             response_overdue=response_overdue_count,
             resolve_overdue=resolve_overdue_count,
+            notification_created=notification_created_count,
+            skipped=skipped_count,
         )
+        logger.info(
+            "[SLA Timeout] scanned=%s response_overdue=%s "
+            "resolve_overdue=%s notification_created=%s skipped=%s",
+            result.scanned,
+            result.response_overdue,
+            result.resolve_overdue,
+            result.notification_created,
+            result.skipped,
+        )
+        logger.info("[SLA Timeout] finished")
+        return result
 
     def _is_past_deadline(
         self,
@@ -211,11 +254,11 @@ class SlaService:
         ticket: Ticket,
         title: str,
         content: str,
-    ) -> None:
+    ) -> bool:
         recipient_id = ticket.handler_id or ticket.reporter_id
         if recipient_id is None:
             logger.warning("跳过 SLA 超时通知，工单 %s 没有可通知用户", ticket.id)
-            return
+            return False
         notification_service.create_notification(
             user_id=recipient_id,
             title=title,
@@ -223,6 +266,7 @@ class SlaService:
             biz_type="ticket",
             biz_id=ticket.id,
         )
+        return True
 
 
 def calculate_ticket_sla_deadline(

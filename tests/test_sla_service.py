@@ -243,6 +243,8 @@ def test_check_ticket_sla_timeout_marks_overdue_and_creates_notifications(
     assert result.scanned == 1
     assert result.response_overdue == 1
     assert result.resolve_overdue == 1
+    assert result.notification_created == 2
+    assert result.skipped == 0
     assert ticket.response_overdue == 1
     assert ticket.resolve_overdue == 1
     assert [item.title for item in notifications] == ["工单响应已超时", "工单处理已超时"]
@@ -274,8 +276,10 @@ def test_check_ticket_sla_timeout_does_not_create_duplicate_notifications(
     notifications = db_session.query(Notification).all()
     assert first_result.response_overdue == 1
     assert first_result.resolve_overdue == 1
+    assert first_result.notification_created == 2
     assert second_result.response_overdue == 0
     assert second_result.resolve_overdue == 0
+    assert second_result.notification_created == 0
     assert len(notifications) == 2
 
 
@@ -313,4 +317,67 @@ def test_check_ticket_sla_timeout_skips_finished_tickets(db_session: Session) ->
     assert result.scanned == 0
     assert db_session.get(Ticket, 1).response_overdue == 0
     assert db_session.get(Ticket, 2).resolve_overdue == 0
+    assert db_session.query(Notification).count() == 0
+
+
+def test_check_ticket_sla_timeout_does_not_mark_responded_ticket(
+    db_session: Session,
+) -> None:
+    now = datetime.now()
+    db_session.add(
+        Ticket(
+            id=1,
+            ticket_no="TK1",
+            title="responded",
+            description="test",
+            status=TicketStatus.PROCESSING,
+            reporter_id=1,
+            handler_id=2,
+            first_response_at=now - timedelta(minutes=20),
+            sla_response_deadline=now - timedelta(minutes=10),
+            sla_resolve_deadline=now + timedelta(minutes=10),
+        )
+    )
+    db_session.commit()
+
+    result = SlaService(db_session).check_ticket_sla_timeout()
+    db_session.commit()
+
+    ticket = db_session.get(Ticket, 1)
+    assert result.scanned == 0
+    assert result.response_overdue == 0
+    assert result.notification_created == 0
+    assert ticket.response_overdue == 0
+    assert db_session.query(Notification).count() == 0
+
+
+def test_check_ticket_sla_timeout_does_not_mark_resolved_ticket(
+    db_session: Session,
+) -> None:
+    now = datetime.now()
+    db_session.add(
+        Ticket(
+            id=1,
+            ticket_no="TK1",
+            title="resolved",
+            description="test",
+            status=TicketStatus.PROCESSING,
+            reporter_id=1,
+            handler_id=2,
+            first_response_at=now - timedelta(minutes=30),
+            resolved_at=now - timedelta(minutes=1),
+            sla_response_deadline=now - timedelta(minutes=20),
+            sla_resolve_deadline=now - timedelta(minutes=10),
+        )
+    )
+    db_session.commit()
+
+    result = SlaService(db_session).check_ticket_sla_timeout()
+    db_session.commit()
+
+    ticket = db_session.get(Ticket, 1)
+    assert result.scanned == 0
+    assert result.resolve_overdue == 0
+    assert result.notification_created == 0
+    assert ticket.resolve_overdue == 0
     assert db_session.query(Notification).count() == 0

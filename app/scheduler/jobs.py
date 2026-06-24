@@ -18,10 +18,13 @@ def check_ticket_sla_timeout() -> None:
         result = check_ticket_sla_timeout_service(db)
         db.commit()
         logger.info(
-            "[SLA Job] scanned=%s response_overdue=%s resolve_overdue=%s",
+            "[SLA Job] scanned=%s response_overdue=%s "
+            "resolve_overdue=%s notification_created=%s skipped=%s",
             result.scanned,
             result.response_overdue,
             result.resolve_overdue,
+            result.notification_created,
+            result.skipped,
         )
     except Exception:
         db.rollback()

@@ -3688,6 +3688,25 @@ timezone: Asia/Shanghai
 当前状态排除 completed、cancelled。
 ```
 
+候选工单查询条件：
+
+```text
+只查询可能已经超时的工单，避免每次任务扫描全部工单。
+
+工单状态 NOT IN (completed, cancelled)
+并且满足以下任一条件：
+
+1. response_overdue = 0
+   AND first_response_at IS NULL
+   AND sla_response_deadline IS NOT NULL
+   AND sla_response_deadline < 当前时间
+
+2. resolve_overdue = 0
+   AND resolved_at IS NULL
+   AND sla_resolve_deadline IS NOT NULL
+   AND sla_resolve_deadline < 当前时间
+```
+
 响应超时判断：
 
 ```text
@@ -3701,7 +3720,8 @@ timezone: Asia/Shanghai
 ```text
 1. 更新 response_overdue = 1；
 2. 写入站内信通知；
-3. 通过 response_overdue 避免重复发送同类通知。
+3. 记录日志；
+4. 通过 response_overdue 避免重复发送同类通知。
 ```
 
 处理超时判断：
@@ -3717,7 +3737,8 @@ timezone: Asia/Shanghai
 ```text
 1. 更新 resolve_overdue = 1；
 2. 写入站内信通知；
-3. 通过 resolve_overdue 避免重复发送同类通知。
+3. 记录日志；
+4. 通过 resolve_overdue 避免重复发送同类通知。
 ```
 
 通知规则：
@@ -3734,13 +3755,40 @@ timezone: Asia/Shanghai
 工单 TK202606230001/办公电脑无法开机 已超过 SLA 处理完成时间，请尽快处理。
 ```
 
+任务执行结果：
+
+```json
+{
+  "scanned": 12,
+  "response_overdue": 3,
+  "resolve_overdue": 2,
+  "notification_created": 5,
+  "skipped": 0
+}
+```
+
+字段说明：
+
+| 字段                   | 类型  | 说明                         |
+| -------------------- | --- | -------------------------- |
+| scanned              | int | 本次命中的候选超时工单数量             |
+| response_overdue     | int | 本次标记为响应超时的工单数量            |
+| resolve_overdue      | int | 本次标记为处理超时的工单数量            |
+| notification_created | int | 本次创建的站内信数量                 |
+| skipped              | int | 因缺少接收人等原因跳过创建通知的数量       |
+
 日志要求：
 
 ```text
 [Scheduler] APScheduler started
 [Scheduler] APScheduler shutdown
 [SLA Job] start checking ticket SLA timeout
-[SLA Job] scanned=20 response_overdue=2 resolve_overdue=1
+[SLA Timeout] start checking
+[SLA Timeout] ticket 1 response overdue
+[SLA Timeout] ticket 2 resolve overdue
+[SLA Timeout] scanned=20 response_overdue=2 resolve_overdue=1 notification_created=3 skipped=0
+[SLA Timeout] finished
+[SLA Job] scanned=20 response_overdue=2 resolve_overdue=1 notification_created=3 skipped=0
 [SLA Job] finished
 ```
 
@@ -3763,7 +3811,10 @@ timezone: Asia/Shanghai
 6. 构造一个超过 sla_resolve_deadline 且 resolved_at 为空的未完成工单；
 7. 等待任务执行后确认 resolve_overdue = 1，并生成站内信；
 8. 再次执行任务，同一工单同一超时类型不应重复生成通知；
-9. 停止 FastAPI，观察 APScheduler shutdown 日志。
+9. 构造已写入 first_response_at 的工单，即使响应截止时间已过，也不应生成响应超时通知；
+10. 构造已写入 resolved_at 的工单，即使处理截止时间已过，也不应生成处理超时通知；
+11. 构造 completed、cancelled 状态工单，任务不应扫描和提醒；
+12. 停止 FastAPI，观察 APScheduler shutdown 日志。
 ```
 
 ---
