@@ -41,6 +41,7 @@ it_ticket             报修工单表
 it_ticket_record      工单流转记录表
 it_repair_record      维修记录表
 it_faq                常见问题表
+it_notification       站内通知表
 sys_operation_log     操作日志表
 ```
 
@@ -249,6 +250,17 @@ sys_user -> sys_user_role -> sys_role -> sys_role_permission -> sys_permission
 | printer  | 打印机问题  |
 | account  | 账号系统问题 |
 | other    | 其他问题   |
+
+---
+
+## 3.9 通知业务类型 notification.biz_type
+
+| 值     | 说明    |
+| ----- | ----- |
+| ticket | 工单通知  |
+| asset  | 资产通知  |
+| sla    | SLA 提醒 |
+| system | 系统通知  |
 
 ---
 
@@ -2534,11 +2546,347 @@ GET /api/v1/faqs/category-stats
 
 ---
 
-# 15. 字典接口 Dict API
+# 15. 通知中心 Notification API
+
+通知中心用于保存系统消息、工单提醒、SLA 超时提醒、资产相关提醒等站内消息。
+
+对应数据库表：
+
+```text
+it_notification
+```
+
+通用规则：
+
+```text
+1. 所有接口都需要登录；
+2. 只能查询和操作当前登录用户自己的通知；
+3. 列表接口自动排除 deleted = 1 的通知；
+4. 删除接口均为逻辑删除，设置 deleted = 1；
+5. 批量接口 ids 不能为空，一次最多 100 条；
+6. 批量接口会忽略不存在、已删除或不属于当前用户的通知。
+```
+
+## 15.1 查询当前用户通知列表
+
+```http
+GET /api/v1/notifications
+```
+
+权限：登录用户
+
+查询参数：
+
+| 参数        | 类型     | 必填 | 默认值 | 说明                         |
+| --------- | ------ | -- | --- | -------------------------- |
+| page      | int    | 否  | 1   | 页码                         |
+| page_size | int    | 否  | 10  | 每页数量，最大 100                |
+| read_status | int | 否  | -   | 阅读状态：0未读，1已读              |
+| biz_type  | string | 否  | -   | ticket / asset / sla / system |
+| keyword   | string | 否  | -   | 按标题或内容模糊搜索                 |
+
+请求示例：
+
+```http
+GET /api/v1/notifications?page=1&page_size=10&read_status=0&biz_type=ticket
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "id": 2,
+        "title": "新工单分派提醒",
+        "content": "工单 TK202606210001 已分派给你，请及时处理。",
+        "biz_type": "ticket",
+        "biz_id": 1,
+        "read_status": 0,
+        "created_at": "2026-06-23 18:05:00",
+        "read_at": null
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 10,
+    "pages": 1
+  }
+}
+```
+
+---
+
+## 15.2 查询未读通知数量
+
+```http
+GET /api/v1/notifications/unread-count
+```
+
+权限：登录用户
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "unread_count": 5
+  }
+}
+```
+
+---
+
+## 15.3 标记单条通知为已读
+
+```http
+PUT /api/v1/notifications/{notification_id}/read
+```
+
+权限：登录用户
+
+路径参数：
+
+| 参数              | 类型  | 必填 | 说明   |
+| --------------- | --- | -- | ---- |
+| notification_id | int | 是  | 通知ID |
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "标记已读成功",
+  "data": {
+    "id": 2,
+    "title": "新工单分派提醒",
+    "content": "工单 TK202606210001 已分派给你，请及时处理。",
+    "biz_type": "ticket",
+    "biz_id": 1,
+    "read_status": 1,
+    "created_at": "2026-06-23 18:05:00",
+    "read_at": "2026-06-24 10:00:00"
+  }
+}
+```
+
+业务规则：
+
+```text
+1. 只能操作当前登录用户自己的通知；
+2. 通知不存在、已删除或不属于当前用户，返回 404；
+3. 已读通知重复调用保持幂等，不报错；
+4. 未读通知会设置 read_status = 1，并写入 read_at。
+```
+
+---
+
+## 15.4 批量标记通知为已读
+
+```http
+PUT /api/v1/notifications/read-batch
+```
+
+权限：登录用户
+
+请求参数：
+
+```json
+{
+  "ids": [1, 2, 3]
+}
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "批量标记已读成功",
+  "data": {
+    "processed_count": 2
+  }
+}
+```
+
+业务规则：
+
+```text
+1. ids 不能为空，最多 100 条；
+2. 只处理当前登录用户自己的未删除通知；
+3. 忽略不存在、已删除或不属于当前用户的通知；
+4. 只统计本次从未读变为已读的通知数量。
+```
+
+---
+
+## 15.5 全部标记为已读
+
+```http
+PUT /api/v1/notifications/read-all
+```
+
+权限：登录用户
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "全部标记已读成功",
+  "data": {
+    "processed_count": 5
+  }
+}
+```
+
+业务规则：
+
+```text
+将当前登录用户所有未读且未删除的通知设置为已读，并写入 read_at。
+```
+
+---
+
+## 15.6 删除单条通知
+
+```http
+DELETE /api/v1/notifications/{notification_id}
+```
+
+权限：登录用户
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "通知删除成功",
+  "data": null
+}
+```
+
+业务规则：
+
+```text
+1. 逻辑删除，设置 deleted = 1；
+2. 只能删除当前登录用户自己的通知；
+3. 通知不存在、已删除或不属于当前用户，返回 404。
+```
+
+---
+
+## 15.7 批量删除通知
+
+```http
+DELETE /api/v1/notifications/batch
+```
+
+权限：登录用户
+
+请求参数：
+
+```json
+{
+  "ids": [1, 2, 3]
+}
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "批量删除成功",
+  "data": {
+    "processed_count": 2
+  }
+}
+```
+
+业务规则：
+
+```text
+1. ids 不能为空，最多 100 条；
+2. 逻辑删除，设置 deleted = 1；
+3. 只处理当前登录用户自己的未删除通知；
+4. 忽略不存在、已删除或不属于当前用户的通知。
+```
+
+---
+
+## 15.8 内部创建通知方法
+
+通知创建方法不暴露前端接口，供工单分派、SLA 定时任务、资产审批等内部模块调用。
+
+```python
+from app.services.notification_service import create_notification
+
+create_notification(
+    db,
+    user_id=2,
+    title="新工单分派提醒",
+    content="工单 TK202606210001 已分派给你，请及时处理。",
+    biz_type="ticket",
+    biz_id=1,
+)
+```
+
+---
+
+## 15.9 curl 测试示例
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/notifications?page=1&page_size=10"
+```
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/notifications/unread-count"
+```
+
+```bash
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/notifications/1/read"
+```
+
+```bash
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"ids\":[1,2,3]}" \
+  "http://127.0.0.1:8000/api/v1/notifications/read-batch"
+```
+
+```bash
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/notifications/read-all"
+```
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8000/api/v1/notifications/1"
+```
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"ids\":[1,2,3]}" \
+  "http://127.0.0.1:8000/api/v1/notifications/batch"
+```
+
+---
+
+# 16. 字典接口 Dict API
 
 为了方便前端渲染下拉框，提供统一字典接口。
 
-## 15.1 查询所有字典
+## 16.1 查询所有字典
 
 ```http
 GET /api/v1/dicts
@@ -2679,13 +3027,13 @@ GET /api/v1/dicts
 
 ---
 
-# 16. RBAC 权限管理 API
+# 17. RBAC 权限管理 API
 
 RBAC 管理接口用于维护角色、查看权限、分配角色权限和分配用户角色。
 
 所有角色、权限、用户角色、角色权限相关操作都会写入 `sys_operation_log`。
 
-## 16.1 查询角色列表
+## 17.1 查询角色列表
 
 ```http
 GET /api/v1/roles
@@ -2731,7 +3079,7 @@ GET /api/v1/roles
 
 ---
 
-## 16.2 创建角色
+## 17.2 创建角色
 
 ```http
 POST /api/v1/roles
@@ -2761,7 +3109,7 @@ POST /api/v1/roles
 
 ---
 
-## 16.3 查询角色详情
+## 17.3 查询角色详情
 
 ```http
 GET /api/v1/roles/{role_id}
@@ -2771,7 +3119,7 @@ GET /api/v1/roles/{role_id}
 
 ---
 
-## 16.4 修改角色
+## 17.4 修改角色
 
 ```http
 PUT /api/v1/roles/{role_id}
@@ -2792,7 +3140,7 @@ PUT /api/v1/roles/{role_id}
 
 ---
 
-## 16.5 修改角色状态
+## 17.5 修改角色状态
 
 ```http
 PATCH /api/v1/roles/{role_id}/status
@@ -2810,7 +3158,7 @@ PATCH /api/v1/roles/{role_id}/status
 
 ---
 
-## 16.6 删除角色
+## 17.6 删除角色
 
 ```http
 DELETE /api/v1/roles/{role_id}
@@ -2828,7 +3176,7 @@ DELETE /api/v1/roles/{role_id}
 
 ---
 
-## 16.7 查询权限列表
+## 17.7 查询权限列表
 
 ```http
 GET /api/v1/permissions
@@ -2871,7 +3219,7 @@ GET /api/v1/permissions
 
 ---
 
-## 16.8 查询分组权限
+## 17.8 查询分组权限
 
 ```http
 GET /api/v1/permissions/grouped
@@ -2911,7 +3259,7 @@ GET /api/v1/permissions/grouped
 
 ---
 
-## 16.9 查询角色权限
+## 17.9 查询角色权限
 
 ```http
 GET /api/v1/roles/{role_id}/permissions
@@ -2923,7 +3271,7 @@ GET /api/v1/roles/{role_id}/permissions
 
 ---
 
-## 16.10 分配角色权限
+## 17.10 分配角色权限
 
 ```http
 PUT /api/v1/roles/{role_id}/permissions
@@ -2950,7 +3298,7 @@ PUT /api/v1/roles/{role_id}/permissions
 
 ---
 
-## 16.11 查询用户角色
+## 17.11 查询用户角色
 
 ```http
 GET /api/v1/users/{user_id}/roles
@@ -2962,7 +3310,7 @@ GET /api/v1/users/{user_id}/roles
 
 ---
 
-## 16.12 分配用户角色
+## 17.12 分配用户角色
 
 ```http
 PUT /api/v1/users/{user_id}/roles
@@ -2989,7 +3337,7 @@ PUT /api/v1/users/{user_id}/roles
 
 ---
 
-# 17. 工单状态流转规则
+# 18. 工单状态流转规则
 
 工单状态只能按照以下规则流转：
 
@@ -3023,9 +3371,9 @@ processing -> cancelled
 
 ---
 
-# 18. 后端实现要求
+# 19. 后端实现要求
 
-## 18.1 FastAPI 路由建议
+## 19.1 FastAPI 路由建议
 
 建议拆分以下 router：
 
@@ -3040,12 +3388,13 @@ app/api/v1/routers/operation_logs.py
 app/api/v1/routers/dashboard.py
 app/api/v1/routers/dicts.py
 app/api/v1/routers/faqs.py
+app/api/v1/routers/notifications.py
 app/routers/rbac.py
 ```
 
 ---
 
-## 18.2 Service 层建议
+## 19.2 Service 层建议
 
 建议拆分以下 service：
 
@@ -3058,12 +3407,13 @@ app/services/repair_service.py
 app/services/log_service.py
 app/services/dashboard_service.py
 app/services/faq_service.py
+app/services/notification_service.py
 app/services/rbac_service.py
 ```
 
 ---
 
-## 18.3 数据模型建议
+## 19.3 数据模型建议
 
 建议拆分以下 model：
 
@@ -3076,12 +3426,13 @@ app/models/ticket_record.py
 app/models/repair_record.py
 app/models/operation_log.py
 app/models/faq.py
+app/models/notification.py
 app/models/rbac.py
 ```
 
 ---
 
-## 18.4 Pydantic Schema 建议
+## 19.4 Pydantic Schema 建议
 
 建议拆分以下 schema：
 
@@ -3093,12 +3444,13 @@ app/schemas/ticket_schema.py
 app/schemas/repair_schema.py
 app/schemas/common_schema.py
 app/schemas/faq_schema.py
+app/schemas/notification_schema.py
 app/schemas/rbac_schema.py
 ```
 
 ---
 
-## 18.5 统一响应工具
+## 19.5 统一响应工具
 
 请封装统一响应方法：
 
@@ -3120,7 +3472,7 @@ def fail(code=40000, message="操作失败", data=None):
 
 ---
 
-## 18.6 权限校验要求
+## 19.6 权限校验要求
 
 需要实现依赖函数：
 
@@ -3147,7 +3499,7 @@ sys_user.role 可以继续作为用户基础信息字段返回；
 
 ---
 
-## 18.7 操作日志要求
+## 19.7 操作日志要求
 
 以下操作必须写入 sys_operation_log：
 
