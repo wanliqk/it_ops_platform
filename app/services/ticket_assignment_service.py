@@ -15,6 +15,7 @@ from app.models import (
     TicketAssignmentRule,
     TicketAssignStrategy,
     TicketAssignType,
+    TicketCategory,
     TicketStatus,
     User,
     WorkGroup,
@@ -176,25 +177,39 @@ class TicketAssignmentService:
 
         old_handler_id = ticket.handler_id
         try:
-            rule = self.match_assignment_rule(ticket)
-            if rule is None:
-                result = TicketAssignmentResult(
-                    success=False,
-                    fail_stage="match_rule",
-                    fail_reason="未匹配到可用自动分配规则",
-                )
-            elif rule.assign_strategy == TicketAssignStrategy.LEAST_WORKLOAD:
-                result = self.assign_by_least_workload(ticket, rule)
-            elif rule.assign_strategy == TicketAssignStrategy.FIXED_USER:
-                result = self.assign_by_fixed_user(ticket, rule)
+            category = self.db.get(TicketCategory, ticket.category_id)
+            if category is not None and category.assignment_strategy:
+                if category.assignment_strategy == TicketAssignStrategy.LEAST_WORKLOAD:
+                    result = self.assign_category_by_least_workload(ticket, category)
+                elif category.assignment_strategy == TicketAssignStrategy.FIXED_USER:
+                    result = self.assign_category_by_fixed_user(ticket, category)
+                else:
+                    result = TicketAssignmentResult(
+                        success=False,
+                        assign_strategy=category.assignment_strategy,
+                        fail_stage="match_rule",
+                        fail_reason="工单分类配置了不支持的自动分配策略",
+                    )
             else:
-                result = TicketAssignmentResult(
-                    success=False,
-                    rule=rule,
-                    assign_strategy=str(rule.assign_strategy),
-                    fail_stage="match_rule",
-                    fail_reason="不支持的自动分配策略",
-                )
+                rule = self.match_assignment_rule(ticket)
+                if rule is None:
+                    result = TicketAssignmentResult(
+                        success=False,
+                        fail_stage="match_rule",
+                        fail_reason="未匹配到可用自动分配规则",
+                    )
+                elif rule.assign_strategy == TicketAssignStrategy.LEAST_WORKLOAD:
+                    result = self.assign_by_least_workload(ticket, rule)
+                elif rule.assign_strategy == TicketAssignStrategy.FIXED_USER:
+                    result = self.assign_by_fixed_user(ticket, rule)
+                else:
+                    result = TicketAssignmentResult(
+                        success=False,
+                        rule=rule,
+                        assign_strategy=str(rule.assign_strategy),
+                        fail_stage="match_rule",
+                        fail_reason="不支持的自动分配策略",
+                    )
         except Exception:
             logger.exception("[Ticket Assignment] auto assignment failed")
             result = TicketAssignmentResult(
@@ -214,6 +229,105 @@ class TicketAssignmentService:
         self.create_assignment_log(ticket, result)
         self.db.flush()
         return result
+
+    def assign_category_by_least_workload(
+        self,
+        ticket: Ticket,
+        category: TicketCategory,
+    ) -> TicketAssignmentResult:
+        if category.default_group_id is None:
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.LEAST_WORKLOAD,
+                fail_stage="check_group",
+                fail_reason="工单分类未配置默认运维组",
+            )
+        group = self.db.get(WorkGroup, category.default_group_id)
+        if group is None:
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.LEAST_WORKLOAD,
+                fail_stage="check_group",
+                fail_reason="工单分类默认运维组不存在",
+            )
+        if group.status != 1:
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.LEAST_WORKLOAD,
+                fail_stage="check_group",
+                fail_reason="工单分类默认运维组已禁用",
+            )
+        members = self.get_available_group_members(category.default_group_id)
+        if not members:
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.LEAST_WORKLOAD,
+                fail_stage="check_member",
+                fail_reason="工单分类默认运维组下没有可用成员",
+            )
+        assignee = self._select_least_workload_user([member.user_id for member in members])
+        return TicketAssignmentResult(
+            success=True,
+            assignee=assignee,
+            assign_strategy=TicketAssignStrategy.LEAST_WORKLOAD,
+        )
+
+    def assign_category_by_fixed_user(
+        self,
+        ticket: Ticket,
+        category: TicketCategory,
+    ) -> TicketAssignmentResult:
+        if category.fixed_assignee_id is None:
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.FIXED_USER,
+                fail_stage="check_user",
+                fail_reason="工单分类未配置固定处理人",
+            )
+        user = self.db.get(User, category.fixed_assignee_id)
+        if user is None:
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.FIXED_USER,
+                fail_stage="check_user",
+                fail_reason="工单分类固定处理人不存在",
+            )
+        if user.status != 1:
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.FIXED_USER,
+                fail_stage="check_user",
+                fail_reason="工单分类固定处理人账号已禁用",
+            )
+        if not self._is_it_staff(user.id):
+            return TicketAssignmentResult(
+                success=False,
+                assign_strategy=TicketAssignStrategy.FIXED_USER,
+                fail_stage="check_user",
+                fail_reason="工单分类固定处理人不是 IT 运维人员",
+            )
+        return TicketAssignmentResult(
+            success=True,
+            assignee=user,
+            assign_strategy=TicketAssignStrategy.FIXED_USER,
+        )
+
+    def _select_least_workload_user(self, user_ids: list[int]) -> User:
+        workloads = self.count_unfinished_tickets(user_ids)
+        last_assigned = self.get_user_last_assigned_at(user_ids)
+        selected_id = min(
+            user_ids,
+            key=lambda user_id: (
+                workloads.get(user_id, 0),
+                0 if last_assigned.get(user_id) is None else 1,
+                last_assigned.get(user_id) or datetime.min,
+                user_id,
+            ),
+        )
+        assignee = self.db.get(User, selected_id)
+        if assignee is None:
+            raise TicketAssignmentValidationError("选择处理人失败")
+        return assignee
 
     def match_assignment_rule(self, ticket: Ticket) -> TicketAssignmentRule | None:
         category_id = ticket.category_id

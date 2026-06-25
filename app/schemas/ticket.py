@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict
 from app.models.ticket import (
     RepairResult,
     TicketAction,
-    TicketFaultType,
     TicketPriority,
     TicketStatus,
 )
@@ -15,9 +14,8 @@ from app.models.ticket import (
 class TicketBase(BaseModel):
     title: str
     description: str
-    fault_type: TicketFaultType | None = None
-    category_id: int | None = None
-    priority: TicketPriority = TicketPriority.NORMAL
+    category_id: int
+    priority: TicketPriority | None = None
     reporter_id: int | None = None
     handler_id: int | None = None
     asset_id: int | None = None
@@ -31,7 +29,6 @@ class TicketCreate(TicketBase):
 class TicketUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
-    fault_type: TicketFaultType | None = None
     category_id: int | None = None
     priority: TicketPriority | None = None
     status: TicketStatus | None = None

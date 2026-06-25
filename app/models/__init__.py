@@ -9,7 +9,6 @@ from app.models.ticket import (
     RepairResult,
     Ticket,
     TicketAction,
-    TicketFaultType,
     TicketPriority,
     TicketRecord,
     TicketStatus,
@@ -20,6 +19,7 @@ from app.models.ticket_assignment import (
     TicketAssignStrategy,
     TicketAssignType,
 )
+from app.models.ticket_category import TicketCategory
 from app.models.todo import Todo, TodoPriority, TodoStatus, TodoType
 from app.models.user import User, UserRole
 from app.models.work_group import WorkGroup, WorkGroupMember, WorkGroupMemberRole
@@ -46,7 +46,7 @@ __all__ = [
     "TicketAssignmentRule",
     "TicketAssignStrategy",
     "TicketAssignType",
-    "TicketFaultType",
+    "TicketCategory",
     "TicketPriority",
     "TicketRecord",
     "TicketStatus",

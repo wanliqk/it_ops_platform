@@ -8,7 +8,7 @@ SlaPriority = Literal["urgent", "high", "medium", "low"]
 
 class SlaRuleBase(BaseModel):
     name: str
-    ticket_category: str | None = None
+    category_id: int | None = None
     priority: SlaPriority
     response_minutes: int
     resolve_minutes: int
@@ -42,7 +42,7 @@ class SlaRuleCreate(SlaRuleBase):
 
 class SlaRuleUpdate(BaseModel):
     name: str | None = None
-    ticket_category: str | None = None
+    category_id: int | None = None
     priority: SlaPriority | None = None
     response_minutes: int | None = None
     resolve_minutes: int | None = None

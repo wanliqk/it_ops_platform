@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.mobile.deps import DBSession, get_current_mobile_user
 from app.core.responses import success_response
-from app.models import TicketFaultType, TicketPriority, TicketStatus, User
+from app.models import TicketCategory, TicketPriority, TicketStatus, User
 from app.schemas.mobile import (
     MobileResponse,
     MobileTicketCancelled,
@@ -33,16 +33,14 @@ def recent_tickets(
 
 
 @router.get("/form-options", response_model=MobileResponse[TicketFormOptionsData])
-def form_options(current_user: CurrentUser) -> dict:
+def form_options(current_user: CurrentUser, db: DBSession) -> dict:
     _ = current_user
+    categories = db.query(TicketCategory).filter(TicketCategory.status == 1).all()
     return success_response(
         TicketFormOptionsData(
-            fault_types=[
-                OptionItem(value=TicketFaultType.HARDWARE, label="硬件故障"),
-                OptionItem(value=TicketFaultType.SOFTWARE, label="软件故障"),
-                OptionItem(value=TicketFaultType.NETWORK, label="网络故障"),
-                OptionItem(value=TicketFaultType.PRINTER, label="打印机故障"),
-                OptionItem(value=TicketFaultType.OTHER, label="其他问题"),
+            categories=[
+                OptionItem(value=str(category.id), label=category.name)
+                for category in sorted(categories, key=lambda item: (item.sort_order, item.id))
             ],
             priorities=[
                 OptionItem(value=TicketPriority.LOW, label="低"),

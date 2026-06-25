@@ -4,7 +4,7 @@ from typing import Any, Generic, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.faq import FaqCategory
-from app.models.ticket import TicketAction, TicketFaultType, TicketPriority, TicketStatus
+from app.models.ticket import TicketAction, TicketPriority, TicketStatus
 from app.models.user import UserRole
 
 T = TypeVar("T")
@@ -65,14 +65,14 @@ class MobileAssetOption(BaseModel):
 
 
 class TicketFormOptionsData(BaseModel):
-    fault_types: list[OptionItem]
+    categories: list[OptionItem]
     priorities: list[OptionItem]
 
 
 class MobileTicketCreate(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     description: str = Field(min_length=1)
-    fault_type: TicketFaultType
+    category_id: int
     priority: TicketPriority = TicketPriority.NORMAL
     asset_id: int | None = None
 
@@ -88,7 +88,7 @@ class MobileTicketCreated(BaseModel):
 
 
 class MobileTicketListItem(MobileTicketCreated):
-    fault_type: TicketFaultType | None = None
+    category_id: int
     priority: TicketPriority
     asset_id: int | None = None
 
@@ -152,7 +152,7 @@ class MobileTicketDetail(BaseModel):
     ticket_no: str
     title: str
     description: str
-    fault_type: TicketFaultType | None = None
+    category_id: int
     priority: TicketPriority
     status: TicketStatus
     result: str | None = None

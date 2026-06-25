@@ -13,6 +13,7 @@ from app.models import (
     Ticket,
     TicketAssignmentLog,
     TicketAssignmentRule,
+    TicketCategory,
     TicketStatus,
     Todo,
     TodoStatus,
@@ -91,6 +92,7 @@ def db_session() -> Iterator[Session]:
                 WorkGroupMember(id=1, group_id=1, user_id=2, status=1),
                 WorkGroupMember(id=2, group_id=1, user_id=3, status=1),
                 WorkGroupMember(id=3, group_id=2, user_id=2, status=1),
+                TicketCategory(id=1, name="电脑故障", code="computer", status=1),
             ]
         )
         session.commit()

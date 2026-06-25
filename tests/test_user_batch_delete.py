@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
-from app.models import Ticket, TicketStatus, User
+from app.models import Ticket, TicketCategory, TicketStatus, User
 from app.models import __all__ as _model_exports
 from app.schemas.user import UserBatchDeleteRequest
 from app.services.user_service import UserService
@@ -21,6 +21,8 @@ def db_session() -> Iterator[Session]:
     session_factory = sessionmaker(bind=engine)
     session = session_factory()
     try:
+        session.add(TicketCategory(id=1, name="默认分类", code="default", status=1))
+        session.commit()
         yield session
     finally:
         session.close()
@@ -47,6 +49,7 @@ def add_ticket(session: Session, ticket_id: int, reporter_id: int, status: Ticke
             ticket_no=f"TK{ticket_id:04d}",
             title="test ticket",
             description="test ticket",
+            category_id=1,
             status=status,
             reporter_id=reporter_id,
         )

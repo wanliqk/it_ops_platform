@@ -13,6 +13,7 @@ from app.api.v1.routes import (
     repair_records,
     sla_rules,
     ticket_assignment_rules,
+    ticket_categories,
     tickets,
     todos,
     users,
@@ -43,6 +44,11 @@ api_router.include_router(faqs.router, prefix="/faqs", tags=["faqs"])
 api_router.include_router(repair_records.router, prefix="/repair-records", tags=["repair-records"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(sla_rules.router, prefix="/sla-rules", tags=["sla-rules"])
+api_router.include_router(
+    ticket_categories.router,
+    prefix="/ticket-categories",
+    tags=["ticket-categories"],
+)
 api_router.include_router(operation_logs.router, prefix="/operation-logs", tags=["operation-logs"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(dicts.router, prefix="/dicts", tags=["dicts"])

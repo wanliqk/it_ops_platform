@@ -77,7 +77,6 @@ def ticket_dict(ticket: Any) -> dict[str, Any]:
             "ticket_no",
             "title",
             "description",
-            "fault_type",
             "category_id",
             "priority",
             "status",
@@ -103,11 +102,53 @@ def ticket_dict(ticket: Any) -> dict[str, Any]:
     )
     data["assignee_id"] = ticket.handler_id
     data["reporter_name"] = ticket.reporter.real_name if ticket.reporter else None
+    data["category"] = (
+        {
+            "id": ticket.category.id,
+            "name": ticket.category.name,
+            "code": ticket.category.code,
+        }
+        if ticket.category
+        else None
+    )
+    data["category_name"] = ticket.category.name if ticket.category else None
     data["handler_name"] = ticket.handler.real_name if ticket.handler else None
     data["assignee_name"] = data["handler_name"]
     data["assigner_name"] = ticket.assigner.real_name if ticket.assigner else None
     data["asset_no"] = ticket.asset.asset_no if ticket.asset else None
     data["asset_name"] = ticket.asset.asset_name if ticket.asset else None
+    return data
+
+
+def ticket_category_dict(category: Any) -> dict[str, Any]:
+    data = obj_dict(
+        category,
+        [
+            "id",
+            "parent_id",
+            "name",
+            "code",
+            "description",
+            "default_priority",
+            "default_group_id",
+            "assignment_strategy",
+            "fixed_assignee_id",
+            "require_asset",
+            "sort_order",
+            "status",
+            "created_at",
+            "updated_at",
+        ],
+    )
+    data["default_group_name"] = (
+        category.default_group.group_name if category.default_group else None
+    )
+    data["fixed_assignee_name"] = (
+        category.fixed_assignee.real_name if category.fixed_assignee else None
+    )
+    children = getattr(category, "children", None)
+    if children is not None:
+        data["children"] = [ticket_category_dict(child) for child in children]
     return data
 
 

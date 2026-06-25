@@ -26,6 +26,7 @@ from app.schemas.ticket import (
 )
 from app.services.sla_service import SlaService
 from app.services.ticket_assignment_service import TicketAssignmentService
+from app.services.ticket_category_service import TicketCategoryService
 from app.services.todo_service import TodoService
 from app.utils.permissions import get_user_permission_codes, get_user_role_codes
 from app.utils.timezone import local_now
@@ -35,12 +36,21 @@ class TicketConflictError(Exception):
     pass
 
 
+class TicketCategoryRequiredError(Exception):
+    pass
+
+
 class TicketService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
     def create(self, payload: TicketCreate) -> Ticket:
         data = payload.model_dump()
+        category = TicketCategoryService(self.db).ensure_enabled_category(data["category_id"])
+        if category.require_asset == 1 and data.get("asset_id") is None:
+            raise TicketCategoryRequiredError
+        if data.get("priority") is None:
+            data["priority"] = category.default_priority or "normal"
         data["ticket_no"] = data["ticket_no"] or self._generate_ticket_no()
         created_at = local_now()
         data["created_at"] = created_at
@@ -48,7 +58,7 @@ class TicketService:
             self.db
         ).calculate_ticket_sla_deadline(
             created_at=created_at,
-            ticket_category=self._enum_value(data.get("fault_type")),
+            category_id=data["category_id"],
             priority=self._enum_value(data.get("priority")) or "normal",
         )
         data["sla_response_deadline"] = sla_response_deadline
@@ -84,7 +94,7 @@ class TicketService:
         current_user: User,
         keyword: str | None = None,
         status: str | None = None,
-        fault_type: str | None = None,
+        category_id: int | None = None,
         priority: str | None = None,
         reporter_id: int | None = None,
         handler_id: int | None = None,
@@ -101,8 +111,8 @@ class TicketService:
             stmt = stmt.where(or_(Ticket.ticket_no.like(like), Ticket.title.like(like)))
         if status:
             stmt = stmt.where(Ticket.status == status)
-        if fault_type:
-            stmt = stmt.where(Ticket.fault_type == fault_type)
+        if category_id is not None:
+            stmt = stmt.where(Ticket.category_id == category_id)
         if priority:
             stmt = stmt.where(Ticket.priority == priority)
         if reporter_id is not None:
@@ -128,7 +138,13 @@ class TicketService:
             return None
 
         before_status = ticket.status
-        for field, value in payload.model_dump(exclude_unset=True).items():
+        data = payload.model_dump(exclude_unset=True)
+        if "category_id" in data:
+            category = TicketCategoryService(self.db).ensure_enabled_category(data["category_id"])
+            asset_id = data.get("asset_id", ticket.asset_id)
+            if category.require_asset == 1 and asset_id is None:
+                raise TicketCategoryRequiredError
+        for field, value in data.items():
             setattr(ticket, field, value)
 
         if payload.status is not None and payload.status != before_status:
@@ -251,10 +267,15 @@ class TicketService:
         if ticket is None:
             return None
         if self._is_admin(operator):
-            if ticket.status not in {TicketStatus.PENDING, TicketStatus.ASSIGNED}:
+            if ticket.status not in {
+                TicketStatus.PENDING,
+                TicketStatus.PENDING_ACCEPT,
+                TicketStatus.ASSIGNED,
+            }:
                 raise TicketConflictError
         elif ticket.reporter_id == operator.id:
-            self._ensure_status(ticket.status, TicketStatus.PENDING)
+            if ticket.status not in {TicketStatus.PENDING, TicketStatus.PENDING_ACCEPT}:
+                raise TicketConflictError
         else:
             raise PermissionError
         before_status = ticket.status
@@ -285,7 +306,11 @@ class TicketService:
         ticket = self.get(ticket_id)
         if ticket is None:
             return False
-        if ticket.status not in {TicketStatus.PENDING, TicketStatus.CANCELLED}:
+        if ticket.status not in {
+            TicketStatus.PENDING,
+            TicketStatus.PENDING_ACCEPT,
+            TicketStatus.CANCELLED,
+        }:
             raise TicketConflictError
         has_repair = self.db.scalar(
             select(RepairRecord.id).where(RepairRecord.ticket_id == ticket_id).limit(1)
@@ -306,7 +331,10 @@ class TicketService:
     def can_update(self, ticket: Ticket, user: User) -> bool:
         if self._is_admin(user):
             return True
-        return ticket.reporter_id == user.id and ticket.status == TicketStatus.PENDING
+        return ticket.reporter_id == user.id and ticket.status in {
+            TicketStatus.PENDING,
+            TicketStatus.PENDING_ACCEPT,
+        }
 
     def _is_admin(self, user: User) -> bool:
         return "admin" in get_user_role_codes(self.db, user.id)

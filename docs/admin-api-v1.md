@@ -38,6 +38,7 @@ sys_user_role         用户角色关联表
 sys_role_permission   角色权限关联表
 it_asset_category     资产分类表
 it_asset              资产表
+it_ticket_category    工单分类表
 it_ticket             报修工单表
 it_ticket_record      工单流转记录表
 ticket_assignment_rule 工单自动分配规则表
@@ -225,16 +226,29 @@ sys_user -> sys_user_role -> sys_role -> sys_role_permission -> sys_permission
 
 ---
 
-## 3.5 故障类型 fault_type
+## 3.5 工单分类 ticket_category
 
-| 值        | 说明     |
-| -------- | ------ |
-| hardware | 硬件故障   |
-| software | 软件故障   |
-| network  | 网络故障   |
-| printer  | 打印机故障  |
-| account  | 账号权限问题 |
-| other    | 其他     |
+工单分类统一使用 `category_id` 表示，分类数据来自 `it_ticket_category`。
+
+说明：
+
+```text
+1. 旧故障类型字符串字段已废弃，后续工单创建、修改、查询、SLA、自动分配统一使用 category_id；
+2. 工单分类不复用资产分类表；
+3. 工单分类可配置默认优先级、默认运维组、默认分配策略和是否必须关联资产。
+```
+
+默认分类示例：
+
+| code     | name   | 说明 |
+| -------- | ------ | ---- |
+| computer | 电脑故障 | 电脑无法开机、蓝屏、卡顿、外设异常等问题 |
+| network  | 网络故障 | 无法上网、网络慢、IP冲突、无线网络异常等问题 |
+| printer  | 打印机故障 | 无法打印、卡纸、缺墨、驱动异常等问题 |
+| account  | 账号权限 | OA、ERP、邮箱、VPN等账号权限问题 |
+| software | 软件问题 | 办公软件、业务系统、客户端程序异常 |
+| server   | 服务器故障 | 服务器、数据库、中间件、定时任务异常 |
+| other    | 其他问题 | 无法归类的其他 IT 问题 |
 
 ---
 
@@ -353,6 +367,7 @@ SLA 规则使用 medium 表示普通；
 | 角色权限管理 | role:view、role:create、role:update、role:delete、role:assign_permission、permission:view、user:assign_role |
 | 资产分类管理 | asset_category:view、asset_category:create、asset_category:update、asset_category:delete |
 | 资产管理   | asset:view、asset:create、asset:update、asset:status、asset:delete、asset:repair_records |
+| 工单分类管理 | ticket_category:list、ticket_category:create、ticket_category:update、ticket_category:delete、ticket_category:status |
 | 工单管理   | ticket:create、ticket:view_all、ticket:view_self、ticket:update、ticket:assign、ticket:start、ticket:complete、ticket:cancel、ticket:delete、ticket:records、ticket:auto-assign |
 | 工单自动分配 | ticket:assignment-rule:list、ticket:assignment-rule:create、ticket:assignment-rule:update、ticket:assignment-rule:delete、ticket:assignment-rule:status |
 | 维修记录   | repair_record:view、repair_record:update |
@@ -1350,6 +1365,245 @@ GET /api/v1/assets/{asset_id}/repair-records
 
 ---
 
+## 8.8 工单分类 Ticket Category API
+
+工单分类用于报修工单的分类选择、默认优先级、默认运维组和自动分配策略配置。
+
+注意：
+
+```text
+工单分类使用 it_ticket_category；
+资产分类使用 it_asset_category；
+两者互不复用、互不影响。
+```
+
+### 8.8.1 查询工单分类列表
+
+```http
+GET /api/v1/ticket-categories
+```
+
+权限：ticket_category:list
+
+查询参数：
+
+| 参数      | 类型     | 必填 | 说明 |
+| --------- | ------ | -- | ---- |
+| keyword   | string | 否 | 按 name / code 模糊查询 |
+| status    | int    | 否 | 状态：1启用，0停用 |
+| parent_id | int    | 否 | 父级分类ID |
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": 1,
+      "parent_id": null,
+      "name": "电脑故障",
+      "code": "computer",
+      "description": "电脑无法开机、蓝屏、卡顿、外设异常等问题",
+      "default_priority": "normal",
+      "default_group_id": 1,
+      "default_group_name": "桌面运维组",
+      "assignment_strategy": "least_workload",
+      "fixed_assignee_id": null,
+      "fixed_assignee_name": null,
+      "require_asset": 1,
+      "sort_order": 1,
+      "status": 1,
+      "created_at": "2026-06-26 00:00:00",
+      "updated_at": "2026-06-26 00:00:00"
+    }
+  ]
+}
+```
+
+---
+
+### 8.8.2 查询工单分类树
+
+```http
+GET /api/v1/ticket-categories/tree
+```
+
+权限：ticket_category:list
+
+查询参数：
+
+| 参数   | 类型 | 必填 | 默认值 | 说明 |
+| ------ | ---- | -- | --- | ---- |
+| status | int  | 否 | 1 | 状态筛选；传空可查询全部状态 |
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": 1,
+      "parent_id": null,
+      "name": "电脑故障",
+      "code": "computer",
+      "children": [
+        {
+          "id": 8,
+          "parent_id": 1,
+          "name": "无法开机",
+          "code": "computer_power_on",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+排序规则：
+
+```text
+sort_order ASC, id ASC
+```
+
+---
+
+### 8.8.3 创建工单分类
+
+```http
+POST /api/v1/ticket-categories
+```
+
+权限：ticket_category:create
+
+请求体：
+
+```json
+{
+  "parent_id": null,
+  "name": "电脑故障",
+  "code": "computer",
+  "description": "电脑无法开机、蓝屏、卡顿等问题",
+  "default_priority": "normal",
+  "default_group_id": 1,
+  "assignment_strategy": "least_workload",
+  "fixed_assignee_id": null,
+  "require_asset": 1,
+  "sort_order": 1,
+  "status": 1
+}
+```
+
+规则：
+
+```text
+1. name 必填；
+2. code 必填且唯一；
+3. assignment_strategy 只能是 least_workload、fixed_user 或空；
+4. assignment_strategy = least_workload 时，default_group_id 必填；
+5. assignment_strategy = fixed_user 时，fixed_assignee_id 必填；
+6. status 默认为 1；
+7. require_asset 只能为 1 或 0。
+```
+
+---
+
+### 8.8.4 查询工单分类详情
+
+```http
+GET /api/v1/ticket-categories/{category_id}
+```
+
+权限：ticket_category:list
+
+成功响应：返回单个工单分类对象，字段同列表接口。
+
+---
+
+### 8.8.5 修改工单分类
+
+```http
+PUT /api/v1/ticket-categories/{category_id}
+```
+
+权限：ticket_category:update
+
+请求体字段同创建接口，支持传入部分字段。
+
+规则：
+
+```text
+1. 不允许把自己设置为自己的父级；
+2. 不允许形成循环父子关系；
+3. 修改 code 时需要校验唯一性；
+4. default_group_id、fixed_assignee_id 需要校验引用数据存在且启用。
+```
+
+---
+
+### 8.8.6 启用或停用工单分类
+
+```http
+PATCH /api/v1/ticket-categories/{category_id}/status
+```
+
+权限：ticket_category:status
+
+请求体：
+
+```json
+{
+  "status": 0
+}
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "工单分类状态修改成功",
+  "data": {
+    "id": 1,
+    "status": 0
+  }
+}
+```
+
+---
+
+### 8.8.7 删除工单分类
+
+```http
+DELETE /api/v1/ticket-categories/{category_id}
+```
+
+权限：ticket_category:delete
+
+说明：
+
+```text
+当前删除接口采用停用方式处理，即 status = 0；
+如果该分类下存在子分类，不允许删除；
+如果已有工单使用该分类，不允许删除。
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "工单分类停用成功",
+  "data": null
+}
+```
+
+---
+
 # 9. 报修工单 Ticket API
 
 ## 9.1 查询工单列表
@@ -1367,7 +1621,7 @@ GET /api/v1/tickets
 | keyword     | string | 否  | 工单编号、标题、描述                                                |
 | status      | string | 否  | pending / assigned / processing / completed / cancelled   |
 | priority    | string | 否  | low / normal / high / urgent                              |
-| fault_type  | string | 否  | hardware / software / network / printer / account / other |
+| category_id | int    | 否  | 工单分类ID                                                   |
 | reporter_id | int    | 否  | 报修人ID                                                     |
 | handler_id  | int    | 否  | 处理人ID                                                     |
 | asset_id    | int    | 否  | 资产ID                                                      |
@@ -1402,7 +1656,13 @@ GET /api/v1/tickets?status=pending&page=1&page_size=10
         "id": 1,
         "ticket_no": "TK202606210001",
         "title": "财务电脑无法开机",
-        "fault_type": "hardware",
+        "category_id": 1,
+        "category_name": "电脑故障",
+        "category": {
+          "id": 1,
+          "name": "电脑故障",
+          "code": "computer"
+        },
         "priority": "high",
         "status": "completed",
         "reporter_id": 3,
@@ -1446,7 +1706,6 @@ POST /api/v1/tickets
 {
   "title": "办公电脑无法开机",
   "description": "按下电源键后主机没有反应，显示器无信号。",
-  "fault_type": "hardware",
   "category_id": 1,
   "priority": "high",
   "asset_id": 1
@@ -1459,8 +1718,7 @@ POST /api/v1/tickets
 | ----------- | ------ | -- | ------------- |
 | title       | string | 是  | 工单标题          |
 | description | string | 是  | 故障描述          |
-| fault_type  | string | 是  | 故障类型          |
-| category_id | int    | 否  | 工单分类ID，用于自动分配规则匹配 |
+| category_id | int    | 是  | 工单分类ID        |
 | priority    | string | 否  | 优先级，默认 normal |
 | asset_id    | int    | 否  | 关联资产ID        |
 
@@ -1495,7 +1753,7 @@ POST /api/v1/tickets
 2. reporter_id 使用当前登录用户ID；
 3. 创建后系统自动尝试执行工单自动分配；
 4. 如果 asset_id 传入，必须校验资产是否存在；
-5. 后端根据 fault_type、priority 和启用状态 SLA 规则自动计算 sla_response_deadline、sla_resolve_deadline；
+5. 后端根据 category_id、priority 和启用状态 SLA 规则自动计算 sla_response_deadline、sla_resolve_deadline；
 6. SLA 第一版按自然时间计算，不排除工作日、节假日和上下班时间；
 7. 自动分配成功后 status = assigned，handler_id / assignee_id 写入处理人ID，assign_type = auto，assigned_at 写入当前时间，accepted_at 保持为空；
 8. 自动分配失败不会导致工单创建失败，工单 status = pending_accept，handler_id / assignee_id 为空，assign_type 为空；
@@ -1527,8 +1785,12 @@ GET /api/v1/tickets/{ticket_id}
     "ticket_no": "TK202606210001",
     "title": "财务电脑无法开机",
     "description": "按下电源键后电脑无反应，显示器无信号。",
-    "fault_type": "hardware",
     "category_id": 1,
+    "category": {
+      "id": 1,
+      "name": "电脑故障",
+      "code": "computer"
+    },
     "priority": "high",
     "status": "completed",
     "assignee_id": 2,
@@ -1602,7 +1864,7 @@ PUT /api/v1/tickets/{ticket_id}
 {
   "title": "办公电脑无法开机",
   "description": "按下电源键后主机没有反应，显示器无信号。",
-  "fault_type": "hardware",
+  "category_id": 1,
   "priority": "high",
   "asset_id": 1
 }
@@ -2208,10 +2470,10 @@ GET /api/v1/dashboard/ticket-trend
 
 ---
 
-## 13.3 查询工单类型分布
+## 13.3 查询工单分类分布
 
 ```http
-GET /api/v1/dashboard/ticket-fault-types
+GET /api/v1/dashboard/ticket-categories
 ```
 
 权限：dashboard:view
@@ -2224,13 +2486,15 @@ GET /api/v1/dashboard/ticket-fault-types
   "message": "success",
   "data": [
     {
-      "fault_type": "hardware",
-      "fault_type_name": "硬件故障",
+      "category_id": 1,
+      "category_name": "电脑故障",
+      "category_code": "computer",
       "count": 20
     },
     {
-      "fault_type": "network",
-      "fault_type_name": "网络故障",
+      "category_id": 2,
+      "category_name": "网络故障",
+      "category_code": "network",
       "count": 15
     }
   ]
@@ -3077,32 +3341,7 @@ GET /api/v1/dicts
         "value": "urgent"
       }
     ],
-    "fault_type": [
-      {
-        "label": "硬件故障",
-        "value": "hardware"
-      },
-      {
-        "label": "软件故障",
-        "value": "software"
-      },
-      {
-        "label": "网络故障",
-        "value": "network"
-      },
-      {
-        "label": "打印机故障",
-        "value": "printer"
-      },
-      {
-        "label": "账号权限问题",
-        "value": "account"
-      },
-      {
-        "label": "其他",
-        "value": "other"
-      }
-    ],
+    "ticket_category": "工单分类不再通过静态字典返回，请调用 GET /api/v1/ticket-categories/tree",
     "asset_status": [
       {
         "label": "在用",
@@ -3483,7 +3722,7 @@ GET /api/v1/sla-rules
 | 参数            | 类型     | 必填 | 说明                              |
 | ------------- | ------ | -- | ------------------------------- |
 | priority      | string | 否  | urgent / high / medium / low    |
-| ticket_category | string | 否 | hardware / software / network / printer / account / other |
+| category_id   | int    | 否  | 工单分类ID；为空表示通用规则              |
 | enabled       | int    | 否  | 1启用，0停用                       |
 | page          | int    | 否  | 页码，默认 1                       |
 | page_size     | int    | 否  | 每页数量，默认 10，最大 100           |
@@ -3499,7 +3738,7 @@ GET /api/v1/sla-rules
       {
         "id": 1,
         "name": "紧急工单通用SLA",
-        "ticket_category": null,
+        "category_id": null,
         "priority": "urgent",
         "response_minutes": 10,
         "resolve_minutes": 120,
@@ -3532,7 +3771,7 @@ POST /api/v1/sla-rules
 ```json
 {
   "name": "网络故障紧急SLA",
-  "ticket_category": "network",
+  "category_id": 2,
   "priority": "urgent",
   "response_minutes": 5,
   "resolve_minutes": 60,
@@ -3546,7 +3785,7 @@ POST /api/v1/sla-rules
 | 字段               | 类型     | 必填 | 说明                                      |
 | ---------------- | ------ | -- | --------------------------------------- |
 | name             | string | 是  | 规则名称                                    |
-| ticket_category  | string | 否  | 工单类型；为空表示通用规则                         |
+| category_id      | int    | 否  | 工单分类ID；为空表示通用规则                         |
 | priority         | string | 是  | urgent / high / medium / low            |
 | response_minutes | int    | 是  | 响应时限，单位分钟，必须大于 0                      |
 | resolve_minutes  | int    | 是  | 处理完成时限，单位分钟，必须大于 0，且大于等于响应时限 |
@@ -3562,7 +3801,7 @@ POST /api/v1/sla-rules
   "data": {
     "id": 6,
     "name": "网络故障紧急SLA",
-    "ticket_category": "network",
+    "category_id": 2,
     "priority": "urgent",
     "response_minutes": 5,
     "resolve_minutes": 60,
@@ -3598,7 +3837,7 @@ PUT /api/v1/sla-rules/{id}
 ```json
 {
   "name": "高优先级通用SLA",
-  "ticket_category": null,
+  "category_id": null,
   "priority": "high",
   "response_minutes": 30,
   "resolve_minutes": 240,
@@ -3616,7 +3855,7 @@ PUT /api/v1/sla-rules/{id}
   "data": {
     "id": 2,
     "name": "高优先级通用SLA",
-    "ticket_category": null,
+    "category_id": null,
     "priority": "high",
     "response_minutes": 30,
     "resolve_minutes": 240,
@@ -3708,8 +3947,8 @@ DELETE /api/v1/sla-rules/{id}
 规则匹配顺序：
 
 ```text
-1. 优先匹配 ticket_category + priority 完全匹配且 enabled = 1 的规则；
-2. 如果没有匹配到，则匹配 ticket_category IS NULL + priority 的通用规则；
+1. 优先匹配 category_id + priority 完全匹配且 enabled = 1 的规则；
+2. 如果没有匹配到，则匹配 category_id IS NULL + priority 的通用规则；
 3. 如果仍然没有匹配到，则使用兜底规则：response_minutes = 60，resolve_minutes = 480；
 4. 多条规则同时匹配时，按 sort_order ASC、id ASC 排序。
 ```

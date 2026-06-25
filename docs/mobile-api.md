@@ -53,15 +53,9 @@ Authorization: Bearer <access_token>
 | `completed` | 已完成 |
 | `cancelled` | 已取消 |
 
-故障类型 `fault_type`:
+工单分类 `category_id`:
 
-| 值 | 说明 |
-| --- | --- |
-| `hardware` | 硬件故障 |
-| `software` | 软件故障 |
-| `network` | 网络故障 |
-| `printer` | 打印机故障 |
-| `other` | 其他问题 |
+工单分类由后端动态维护，移动端通过 `GET /api/mobile/tickets/form-options` 获取可选分类。
 
 优先级 `priority`:
 
@@ -202,7 +196,7 @@ GET /api/mobile/tickets/recent?limit=5
       "title": "电脑无法开机",
       "status": "pending",
       "created_at": "2026-06-22T10:30:00",
-      "fault_type": "hardware",
+      "category_id": 1,
       "priority": "high",
       "asset_id": 1
     }
@@ -214,7 +208,7 @@ GET /api/mobile/tickets/recent?limit=5
 
 ### GET `/api/mobile/tickets/form-options`
 
-说明：获取故障类型和优先级选项。
+说明：获取工单分类和优先级选项。
 
 响应：
 
@@ -223,12 +217,10 @@ GET /api/mobile/tickets/recent?limit=5
   "code": 200,
   "message": "success",
   "data": {
-    "fault_types": [
-      { "value": "hardware", "label": "硬件故障" },
-      { "value": "software", "label": "软件故障" },
-      { "value": "network", "label": "网络故障" },
-      { "value": "printer", "label": "打印机故障" },
-      { "value": "other", "label": "其他问题" }
+    "categories": [
+      { "value": "1", "label": "电脑故障" },
+      { "value": "2", "label": "网络故障" },
+      { "value": "3", "label": "打印机故障" }
     ],
     "priorities": [
       { "value": "low", "label": "低" },
@@ -286,7 +278,7 @@ GET /api/mobile/assets/options?keyword=电脑
 {
   "title": "电脑无法开机",
   "description": "按下电源键后主机没有反应，显示器无信号。",
-  "fault_type": "hardware",
+  "category_id": 1,
   "priority": "high",
   "asset_id": 1
 }
@@ -298,7 +290,7 @@ GET /api/mobile/assets/options?keyword=电脑
 | --- | --- | --- | --- |
 | `title` | string | 是 | 工单标题，最大 100 字符 |
 | `description` | string | 是 | 故障描述 |
-| `fault_type` | string | 是 | 故障类型 |
+| `category_id` | number | 是 | 工单分类 ID |
 | `priority` | string | 否 | 优先级，默认 `normal` |
 | `asset_id` | number/null | 否 | 关联资产 ID，可为空 |
 
@@ -357,7 +349,7 @@ GET /api/mobile/tickets?page=1&page_size=10&status=pending&keyword=电脑
         "title": "电脑无法开机",
         "status": "pending",
         "created_at": "2026-06-22T10:30:00",
-        "fault_type": "hardware",
+        "category_id": 1,
         "priority": "high",
         "asset_id": 1
       }
@@ -392,7 +384,7 @@ Path 参数：
     "ticket_no": "TK202606220001",
     "title": "电脑无法开机",
     "description": "按下电源键后主机没有反应，显示器无信号。",
-    "fault_type": "hardware",
+    "category_id": 1,
     "priority": "high",
     "status": "pending",
     "result": null,

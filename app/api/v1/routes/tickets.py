@@ -17,7 +17,12 @@ from app.schemas.ticket import (
 )
 from app.services.log_service import LogService
 from app.services.ticket_assignment_service import TicketAssignmentService
-from app.services.ticket_service import TicketConflictError, TicketService
+from app.services.ticket_category_service import TicketCategoryNotFoundError
+from app.services.ticket_service import (
+    TicketCategoryRequiredError,
+    TicketConflictError,
+    TicketService,
+)
 from app.utils.permissions import get_user_role_codes
 
 router = APIRouter()
@@ -42,7 +47,7 @@ def list_tickets(
     current_user: TicketReader,
     keyword: str | None = None,
     status_value: Annotated[str | None, Query(alias="status")] = None,
-    fault_type: str | None = None,
+    category_id: int | None = None,
     priority: str | None = None,
     reporter_id: int | None = None,
     handler_id: int | None = None,
@@ -54,7 +59,7 @@ def list_tickets(
         current_user=current_user,
         keyword=keyword,
         status=status_value,
-        fault_type=fault_type,
+        category_id=category_id,
         priority=priority,
         reporter_id=reporter_id,
         handler_id=handler_id,
@@ -74,7 +79,12 @@ def create_ticket(
 ) -> dict:
     if "admin" not in get_user_role_codes(db, current_user.id) or payload.reporter_id is None:
         payload.reporter_id = current_user.id
-    ticket = TicketService(db).create(payload)
+    try:
+        ticket = TicketService(db).create(payload)
+    except TicketCategoryNotFoundError as exc:
+        raise APIException("工单分类不存在或未启用", status.HTTP_400_BAD_REQUEST, 40000) from exc
+    except TicketCategoryRequiredError as exc:
+        raise APIException("该工单分类要求关联资产", status.HTTP_400_BAD_REQUEST, 40000) from exc
     LogService(db).record(
         user_id=current_user.id,
         module_name="工单管理",
@@ -142,7 +152,12 @@ def update_ticket(
         raise APIException("资源不存在", status.HTTP_404_NOT_FOUND, 40400)
     if not service.can_update(ticket, current_user):
         raise APIException("当前工单状态不允许执行该操作", status.HTTP_409_CONFLICT, 40900)
-    updated = service.update(ticket_id, payload)
+    try:
+        updated = service.update(ticket_id, payload)
+    except TicketCategoryNotFoundError as exc:
+        raise APIException("工单分类不存在或未启用", status.HTTP_400_BAD_REQUEST, 40000) from exc
+    except TicketCategoryRequiredError as exc:
+        raise APIException("该工单分类要求关联资产", status.HTTP_400_BAD_REQUEST, 40000) from exc
     LogService(db).record(
         user_id=current_user.id,
         module_name="工单管理",

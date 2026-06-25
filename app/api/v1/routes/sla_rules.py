@@ -32,14 +32,14 @@ def list_sla_rules(
     db: DBSession,
     _: SlaRuleReader,
     priority: str | None = None,
-    ticket_category: str | None = None,
+    category_id: int | None = None,
     enabled: Annotated[int | None, Query(ge=0, le=1)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ) -> dict:
     items, total = SlaService(db).list_rules(
         priority=priority,
-        ticket_category=ticket_category,
+        category_id=category_id,
         enabled=enabled,
         page=page,
         page_size=page_size,

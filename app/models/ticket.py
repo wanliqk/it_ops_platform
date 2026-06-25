@@ -18,15 +18,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 
-class TicketFaultType(StrEnum):
-    HARDWARE = "hardware"
-    SOFTWARE = "software"
-    NETWORK = "network"
-    PRINTER = "printer"
-    ACCOUNT = "account"
-    OTHER = "other"
-
-
 class TicketPriority(StrEnum):
     LOW = "low"
     NORMAL = "normal"
@@ -71,8 +62,11 @@ class Ticket(Base):
     ticket_no: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(100))
     description: Mapped[str] = mapped_column(Text)
-    fault_type: Mapped[TicketFaultType | None] = mapped_column(String(50), default=None)
-    category_id: Mapped[int | None] = mapped_column(BigInteger, default=None, index=True)
+    category_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("it_ticket_category.id"),
+        index=True,
+    )
     priority: Mapped[TicketPriority] = mapped_column(String(20), default=TicketPriority.NORMAL)
     status: Mapped[TicketStatus] = mapped_column(String(30), default=TicketStatus.PENDING)
     reporter_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("sys_user.id"))
@@ -121,6 +115,7 @@ class Ticket(Base):
         foreign_keys=[handler_id],
     )
     assigner = relationship("User", foreign_keys=[assigner_id])
+    category = relationship("TicketCategory")
     asset = relationship("Asset", back_populates="tickets")
     records = relationship("TicketRecord", back_populates="ticket")
     repair_records = relationship("RepairRecord", back_populates="ticket")

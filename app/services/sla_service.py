@@ -35,7 +35,7 @@ class SlaService:
         self,
         *,
         priority: str | None = None,
-        ticket_category: str | None = None,
+        category_id: int | None = None,
         enabled: int | None = None,
         page: int = 1,
         page_size: int = 10,
@@ -43,8 +43,8 @@ class SlaService:
         stmt = select(SlaRule)
         if priority:
             stmt = stmt.where(SlaRule.priority == self.normalize_priority(priority))
-        if ticket_category is not None:
-            stmt = stmt.where(SlaRule.ticket_category == ticket_category)
+        if category_id is not None:
+            stmt = stmt.where(SlaRule.category_id == category_id)
         if enabled is not None:
             stmt = stmt.where(SlaRule.enabled == enabled)
 
@@ -103,17 +103,17 @@ class SlaService:
         self.db.flush()
         return True
 
-    def match_rule(self, ticket_category: str | None, priority: str) -> SlaRule | None:
+    def match_rule(self, category_id: int | None, priority: str) -> SlaRule | None:
         normalized_priority = self.normalize_priority(priority)
         stmt = (
             select(SlaRule)
             .where(
                 SlaRule.enabled == 1,
                 SlaRule.priority == normalized_priority,
-                or_(SlaRule.ticket_category == ticket_category, SlaRule.ticket_category.is_(None)),
+                or_(SlaRule.category_id == category_id, SlaRule.category_id.is_(None)),
             )
             .order_by(
-                (SlaRule.ticket_category.is_(None)).asc(),
+                (SlaRule.category_id.is_(None)).asc(),
                 SlaRule.sort_order.asc(),
                 SlaRule.id.asc(),
             )
@@ -125,10 +125,10 @@ class SlaService:
         self,
         *,
         created_at: datetime,
-        ticket_category: str | None,
+        category_id: int | None,
         priority: str,
     ) -> tuple[datetime, datetime]:
-        rule = self.match_rule(ticket_category, priority)
+        rule = self.match_rule(category_id, priority)
         response_minutes = rule.response_minutes if rule else DEFAULT_RESPONSE_MINUTES
         resolve_minutes = rule.resolve_minutes if rule else DEFAULT_RESOLVE_MINUTES
         return (
@@ -274,12 +274,12 @@ def calculate_ticket_sla_deadline(
     db: Session,
     *,
     created_at: datetime,
-    ticket_category: str | None,
+    category_id: int | None,
     priority: str,
 ) -> tuple[datetime, datetime]:
     return SlaService(db).calculate_ticket_sla_deadline(
         created_at=created_at,
-        ticket_category=ticket_category,
+        category_id=category_id,
         priority=priority,
     )
 

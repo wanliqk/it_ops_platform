@@ -3,16 +3,8 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Asset, Ticket, TicketStatus, User
+from app.models import Asset, Ticket, TicketCategory, TicketStatus, User
 
-FAULT_TYPE_NAMES = {
-    "hardware": "硬件故障",
-    "software": "软件故障",
-    "network": "网络故障",
-    "printer": "打印机故障",
-    "account": "账号权限问题",
-    "other": "其他",
-}
 ASSET_STATUS_NAMES = {
     "in_use": "在用",
     "idle": "闲置",
@@ -55,19 +47,25 @@ class DashboardService:
             for offset in range(days)
         ]
 
-    def ticket_fault_types(self) -> list[dict[str, int | str]]:
+    def ticket_categories(self) -> list[dict[str, int | str]]:
         rows = self.db.execute(
-            select(Ticket.fault_type, func.count(Ticket.id))
-            .where(Ticket.fault_type.is_not(None))
-            .group_by(Ticket.fault_type)
+            select(
+                Ticket.category_id,
+                TicketCategory.name,
+                TicketCategory.code,
+                func.count(Ticket.id),
+            )
+            .join(TicketCategory, TicketCategory.id == Ticket.category_id)
+            .group_by(Ticket.category_id, TicketCategory.name, TicketCategory.code)
         ).all()
         return [
             {
-                "fault_type": str(fault_type),
-                "fault_type_name": FAULT_TYPE_NAMES.get(str(fault_type), str(fault_type)),
+                "category_id": category_id,
+                "category_name": name,
+                "category_code": code,
                 "count": count,
             }
-            for fault_type, count in rows
+            for category_id, name, code, count in rows
         ]
 
     def asset_status(self) -> list[dict[str, int | str]]:

@@ -34,14 +34,6 @@ def dicts(_: Annotated[User, Depends(require_permissions("dict:view"))]) -> dict
                 {"label": "高", "value": "high"},
                 {"label": "紧急", "value": "urgent"},
             ],
-            "fault_type": [
-                {"label": "硬件故障", "value": "hardware"},
-                {"label": "软件故障", "value": "software"},
-                {"label": "网络故障", "value": "network"},
-                {"label": "打印机故障", "value": "printer"},
-                {"label": "账号权限问题", "value": "account"},
-                {"label": "其他", "value": "other"},
-            ],
             "asset_status": [
                 {"label": "在用", "value": "in_use"},
                 {"label": "闲置", "value": "idle"},

@@ -26,9 +26,9 @@ def ticket_trend(
     return success(DashboardService(db).ticket_trend(days))
 
 
-@router.get("/ticket-fault-types")
-def ticket_fault_types(db: DBSession, _: DashboardUser) -> dict:
-    return success(DashboardService(db).ticket_fault_types())
+@router.get("/ticket-categories")
+def ticket_categories(db: DBSession, _: DashboardUser) -> dict:
+    return success(DashboardService(db).ticket_categories())
 
 
 @router.get("/asset-status")

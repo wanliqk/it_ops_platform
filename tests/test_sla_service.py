@@ -7,7 +7,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
-from app.models import Notification, SlaRule, Ticket, TicketPriority, TicketStatus, User
+from app.models import (
+    Notification,
+    SlaRule,
+    Ticket,
+    TicketCategory,
+    TicketPriority,
+    TicketStatus,
+    User,
+)
 from app.models import __all__ as _model_exports
 from app.schemas.ticket import TicketAssign, TicketComplete, TicketCreate, TicketStart
 from app.services.sla_service import SlaService
@@ -43,6 +51,7 @@ def db_session() -> Iterator[Session]:
                     role="it_staff",
                     status=1,
                 ),
+                TicketCategory(id=1, name="软件问题", code="software", status=1),
             ]
         )
         session.commit()
@@ -59,7 +68,7 @@ def add_rule(
     priority: str,
     response_minutes: int,
     resolve_minutes: int,
-    ticket_category: str | None = None,
+    category_id: int | None = None,
     sort_order: int = 10,
     enabled: int = 1,
 ) -> None:
@@ -67,7 +76,7 @@ def add_rule(
         SlaRule(
             id=rule_id,
             name=f"rule-{rule_id}",
-            ticket_category=ticket_category,
+            category_id=category_id,
             priority=priority,
             response_minutes=response_minutes,
             resolve_minutes=resolve_minutes,
@@ -81,7 +90,7 @@ def test_specific_sla_rule_has_priority_over_common_rule(db_session: Session) ->
     add_rule(
         db_session,
         rule_id=1,
-        ticket_category=None,
+        category_id=None,
         priority="urgent",
         response_minutes=10,
         resolve_minutes=120,
@@ -90,7 +99,7 @@ def test_specific_sla_rule_has_priority_over_common_rule(db_session: Session) ->
     add_rule(
         db_session,
         rule_id=2,
-        ticket_category="network",
+        category_id=1,
         priority="urgent",
         response_minutes=5,
         resolve_minutes=60,
@@ -101,7 +110,7 @@ def test_specific_sla_rule_has_priority_over_common_rule(db_session: Session) ->
     created_at = datetime(2026, 6, 24, 10, 0, tzinfo=UTC)
     response_deadline, resolve_deadline = SlaService(db_session).calculate_ticket_sla_deadline(
         created_at=created_at,
-        ticket_category="network",
+        category_id=1,
         priority="urgent",
     )
 
@@ -122,7 +131,7 @@ def test_common_sla_rule_is_used_when_specific_rule_missing(db_session: Session)
     created_at = datetime(2026, 6, 24, 10, 0, tzinfo=UTC)
     response_deadline, resolve_deadline = SlaService(db_session).calculate_ticket_sla_deadline(
         created_at=created_at,
-        ticket_category="software",
+        category_id=1,
         priority="normal",
     )
 
@@ -134,7 +143,7 @@ def test_default_sla_deadline_is_used_when_no_rule_matches(db_session: Session) 
     created_at = datetime(2026, 6, 24, 10, 0, tzinfo=UTC)
     response_deadline, resolve_deadline = SlaService(db_session).calculate_ticket_sla_deadline(
         created_at=created_at,
-        ticket_category="software",
+        category_id=1,
         priority="high",
     )
 
@@ -156,7 +165,7 @@ def test_ticket_create_writes_sla_deadlines(db_session: Session) -> None:
         TicketCreate(
             title="test",
             description="test",
-            fault_type="software",
+            category_id=1,
             priority=TicketPriority.NORMAL,
             reporter_id=1,
         )
@@ -173,6 +182,7 @@ def test_first_response_at_is_written_only_once(db_session: Session) -> None:
             ticket_no="TK1",
             title="test",
             description="test",
+            category_id=1,
             status=TicketStatus.PENDING,
             reporter_id=1,
         )
@@ -195,6 +205,7 @@ def test_complete_writes_resolved_at(db_session: Session) -> None:
             ticket_no="TK1",
             title="test",
             description="test",
+            category_id=1,
             status=TicketStatus.PROCESSING,
             reporter_id=1,
             handler_id=2,
@@ -226,6 +237,7 @@ def test_check_ticket_sla_timeout_marks_overdue_and_creates_notifications(
             ticket_no="TK1",
             title="overdue",
             description="test",
+            category_id=1,
             status=TicketStatus.PENDING,
             reporter_id=1,
             handler_id=2,
@@ -261,6 +273,7 @@ def test_check_ticket_sla_timeout_does_not_create_duplicate_notifications(
             ticket_no="TK1",
             title="overdue",
             description="test",
+            category_id=1,
             status=TicketStatus.PENDING,
             reporter_id=1,
             sla_response_deadline=now - timedelta(minutes=10),
@@ -292,6 +305,7 @@ def test_check_ticket_sla_timeout_skips_finished_tickets(db_session: Session) ->
                 ticket_no="TK1",
                 title="completed",
                 description="test",
+                category_id=1,
                 status=TicketStatus.COMPLETED,
                 reporter_id=1,
                 sla_response_deadline=now - timedelta(minutes=10),
@@ -302,6 +316,7 @@ def test_check_ticket_sla_timeout_skips_finished_tickets(db_session: Session) ->
                 ticket_no="TK2",
                 title="cancelled",
                 description="test",
+                category_id=1,
                 status=TicketStatus.CANCELLED,
                 reporter_id=1,
                 sla_response_deadline=now - timedelta(minutes=10),
@@ -330,6 +345,7 @@ def test_check_ticket_sla_timeout_does_not_mark_responded_ticket(
             ticket_no="TK1",
             title="responded",
             description="test",
+            category_id=1,
             status=TicketStatus.PROCESSING,
             reporter_id=1,
             handler_id=2,
@@ -361,6 +377,7 @@ def test_check_ticket_sla_timeout_does_not_mark_resolved_ticket(
             ticket_no="TK1",
             title="resolved",
             description="test",
+            category_id=1,
             status=TicketStatus.PROCESSING,
             reporter_id=1,
             handler_id=2,

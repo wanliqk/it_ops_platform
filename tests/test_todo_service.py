@@ -12,6 +12,7 @@ from app.models import (
     SysRole,
     SysUserRole,
     Ticket,
+    TicketCategory,
     Todo,
     TodoStatus,
     User,
@@ -61,6 +62,7 @@ def db_session() -> Iterator[Session]:
                 ),
                 SysRole(id=1, role_code="admin", role_name="管理员", status=1),
                 SysUserRole(id=1, user_id=1, role_id=1),
+                TicketCategory(id=1, name="打印机故障", code="printer", status=1),
             ]
         )
         session.commit()
@@ -100,7 +102,7 @@ def test_ticket_flow_creates_and_closes_todos(db_session: Session) -> None:
         TicketCreate(
             title="printer broken",
             description="printer broken",
-            fault_type="printer",
+            category_id=1,
             reporter_id=3,
         )
     )
@@ -142,6 +144,7 @@ def test_check_todo_timeout_expires_todo_and_sends_notification(db_session: Sess
             ticket_no="TK1",
             title="overdue ticket",
             description="test",
+            category_id=1,
             reporter_id=3,
             handler_id=2,
         )

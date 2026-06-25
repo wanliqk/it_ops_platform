@@ -16,6 +16,7 @@ class SlaRule(Base):
     )
     name: Mapped[str] = mapped_column(String(100))
     ticket_category: Mapped[str | None] = mapped_column(String(50), default=None)
+    category_id: Mapped[int | None] = mapped_column(BigInteger, default=None, index=True)
     priority: Mapped[str] = mapped_column(String(20), index=True)
     response_minutes: Mapped[int] = mapped_column(Integer)
     resolve_minutes: Mapped[int] = mapped_column(Integer)

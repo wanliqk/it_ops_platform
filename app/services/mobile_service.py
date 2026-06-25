@@ -16,6 +16,9 @@ from app.models import (
     User,
 )
 from app.schemas.mobile import MobileTicketCreate
+from app.schemas.ticket import TicketCreate
+from app.services.ticket_category_service import TicketCategoryNotFoundError
+from app.services.ticket_service import TicketCategoryRequiredError, TicketService
 
 
 class MobileTicketService:
@@ -31,7 +34,8 @@ class MobileTicketService:
         counts = {str(status): count for status, count in rows}
         return {
             "total_count": sum(counts.values()),
-            "pending_count": counts.get(TicketStatus.PENDING.value, 0),
+            "pending_count": counts.get(TicketStatus.PENDING_ACCEPT.value, 0)
+            + counts.get(TicketStatus.PENDING.value, 0),
             "assigned_count": counts.get(TicketStatus.ASSIGNED.value, 0),
             "processing_count": counts.get(TicketStatus.PROCESSING.value, 0),
             "completed_count": counts.get(TicketStatus.COMPLETED.value, 0),
@@ -80,33 +84,21 @@ class MobileTicketService:
             asset = self.db.get(Asset, payload.asset_id)
             if asset is None or asset.status == AssetStatus.SCRAPPED:
                 raise MobileAPIException("资产不存在或已报废")
-
-        ticket = Ticket(
-            ticket_no=self._generate_ticket_no(),
-            title=payload.title,
-            description=payload.description,
-            fault_type=payload.fault_type,
-            priority=payload.priority,
-            status=TicketStatus.PENDING,
-            reporter_id=user.id,
-            handler_id=None,
-            asset_id=payload.asset_id,
-        )
-        self.db.add(ticket)
-        self.db.flush()
-        self.db.add(
-            TicketRecord(
-                ticket_id=ticket.id,
-                operator_id=user.id,
-                from_status=None,
-                to_status=TicketStatus.PENDING,
-                action=TicketAction.CREATE,
-                remark="用户提交报修工单",
+        try:
+            return TicketService(self.db).create(
+                TicketCreate(
+                    title=payload.title,
+                    description=payload.description,
+                    category_id=payload.category_id,
+                    priority=payload.priority,
+                    reporter_id=user.id,
+                    asset_id=payload.asset_id,
+                )
             )
-        )
-        self.db.commit()
-        self.db.refresh(ticket)
-        return ticket
+        except TicketCategoryNotFoundError as exc:
+            raise MobileAPIException("工单分类不存在或未启用") from exc
+        except TicketCategoryRequiredError as exc:
+            raise MobileAPIException("该工单分类要求关联资产") from exc
 
     def detail(self, user: User, ticket_id: int) -> Ticket:
         ticket = self.db.scalar(
@@ -114,6 +106,7 @@ class MobileTicketService:
             .options(
                 selectinload(Ticket.reporter),
                 selectinload(Ticket.handler),
+                selectinload(Ticket.category),
                 selectinload(Ticket.asset),
                 selectinload(Ticket.repair_records),
                 selectinload(Ticket.records).selectinload(TicketRecord.operator),
@@ -133,7 +126,7 @@ class MobileTicketService:
             raise MobileAPIException("工单不存在", status_code=404)
         if ticket.reporter_id != user.id:
             raise MobileAPIException("无权取消该工单", status_code=403)
-        if ticket.status != TicketStatus.PENDING:
+        if ticket.status not in {TicketStatus.PENDING_ACCEPT, TicketStatus.PENDING}:
             raise MobileAPIException("只有待处理状态的工单可以取消")
 
         ticket.status = TicketStatus.CANCELLED
@@ -141,7 +134,7 @@ class MobileTicketService:
             TicketRecord(
                 ticket_id=ticket.id,
                 operator_id=user.id,
-                from_status=TicketStatus.PENDING,
+                from_status=ticket.status,
                 to_status=TicketStatus.CANCELLED,
                 action=TicketAction.CANCEL,
                 remark=reason,
