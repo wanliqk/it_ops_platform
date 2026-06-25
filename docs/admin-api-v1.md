@@ -40,6 +40,8 @@ it_asset_category     资产分类表
 it_asset              资产表
 it_ticket             报修工单表
 it_ticket_record      工单流转记录表
+ticket_assignment_rule 工单自动分配规则表
+ticket_assignment_log  工单自动分配日志表
 it_repair_record      维修记录表
 it_sla_rule           SLA规则表
 it_faq                常见问题表
@@ -190,13 +192,25 @@ sys_user -> sys_user_role -> sys_role -> sys_role_permission -> sys_permission
 
 | 值          | 说明  |
 | ---------- | --- |
-| pending    | 待受理 |
-| assigned   | 已派单 |
+| pending_accept | 待受理 |
+| pending    | 待派单，兼容旧流程 |
+| assigned   | 已分配，处理人未正式开始处理 |
 | processing | 处理中 |
+| pending_confirm | 待用户确认 |
 | completed  | 已完成 |
+| closed     | 已关闭 |
 | cancelled  | 已取消 |
 
-第一版先使用以上 5 个状态，不要增加过多状态。
+说明：
+
+```text
+1. pending_accept 表示工单已创建但暂时没有处理人，需要 IT 运维人员主动受理或管理员手动分派；
+2. assigned 表示系统或管理员已经分配处理人，但处理人还没有正式开始处理；
+3. processing 表示运维人员已经受理或开始处理；
+4. pending_confirm 表示运维人员处理完成，等待报修人确认；
+5. completed 表示报修人确认完成；
+6. pending 为历史兼容状态，现有接口仍可识别。
+```
 
 ---
 
@@ -288,6 +302,25 @@ SLA 规则使用 medium 表示普通；
 
 ---
 
+## 3.11 工单分配来源 assign_type
+
+| 值     | 说明 |
+| ------ | -- |
+| manual | 管理员手动分派 |
+| auto   | 系统自动分配 |
+| claim  | IT 运维人员主动受理 |
+
+---
+
+## 3.12 自动分配策略 assign_strategy
+
+| 值             | 说明 |
+| -------------- | -- |
+| least_workload | 最少工单分配 |
+| fixed_user     | 固定人员分配 |
+
+---
+
 # 4. RBAC 权限规则
 
 ## 4.1 权限模型
@@ -320,7 +353,8 @@ SLA 规则使用 medium 表示普通；
 | 角色权限管理 | role:view、role:create、role:update、role:delete、role:assign_permission、permission:view、user:assign_role |
 | 资产分类管理 | asset_category:view、asset_category:create、asset_category:update、asset_category:delete |
 | 资产管理   | asset:view、asset:create、asset:update、asset:status、asset:delete、asset:repair_records |
-| 工单管理   | ticket:create、ticket:view_all、ticket:view_self、ticket:update、ticket:assign、ticket:start、ticket:complete、ticket:cancel、ticket:delete、ticket:records |
+| 工单管理   | ticket:create、ticket:view_all、ticket:view_self、ticket:update、ticket:assign、ticket:start、ticket:complete、ticket:cancel、ticket:delete、ticket:records、ticket:auto-assign |
+| 工单自动分配 | ticket:assignment-rule:list、ticket:assignment-rule:create、ticket:assignment-rule:update、ticket:assignment-rule:delete、ticket:assignment-rule:status |
 | 维修记录   | repair_record:view、repair_record:update |
 | FAQ 管理 | faq:view、faq:create、faq:update、faq:status、faq:delete、faq:stats |
 | SLA规则管理 | sla:rule:list、sla:rule:create、sla:rule:update、sla:rule:delete、sla:rule:enable |
@@ -337,7 +371,7 @@ SLA 规则使用 medium 表示普通；
 ```text
 1. 拥有 ticket:view_all 的用户可以查看全部工单；
 2. 只有 ticket:view_self 的用户只能查看 reporter_id = 当前用户ID 的工单；
-3. 普通员工只能修改和取消自己创建且 status = pending 的工单；
+3. 普通员工只能修改和取消自己创建且 status = pending_accept 或 pending 的工单；
 4. IT 运维人员只能完成分配给自己的工单；
 5. RBAC 角色码包含 admin 的用户可以操作全部数据。
 ```
@@ -356,7 +390,7 @@ SLA 规则使用 medium 表示普通；
 创建自己的报修工单
 查看自己的工单列表
 查看自己的工单详情
-取消自己的 pending 状态工单
+取消自己的 pending_accept / pending 状态工单
 查看启用状态的 FAQ 列表和详情
 ```
 
@@ -1413,6 +1447,7 @@ POST /api/v1/tickets
   "title": "办公电脑无法开机",
   "description": "按下电源键后主机没有反应，显示器无信号。",
   "fault_type": "hardware",
+  "category_id": 1,
   "priority": "high",
   "asset_id": 1
 }
@@ -1425,6 +1460,7 @@ POST /api/v1/tickets
 | title       | string | 是  | 工单标题          |
 | description | string | 是  | 故障描述          |
 | fault_type  | string | 是  | 故障类型          |
+| category_id | int    | 否  | 工单分类ID，用于自动分配规则匹配 |
 | priority    | string | 否  | 优先级，默认 normal |
 | asset_id    | int    | 否  | 关联资产ID        |
 
@@ -1437,7 +1473,15 @@ POST /api/v1/tickets
   "data": {
     "id": 5,
     "ticket_no": "TK202606230001",
-    "status": "pending",
+    "status": "assigned",
+    "assignee_id": 2,
+    "assignee_name": "张工",
+    "handler_id": 2,
+    "handler_name": "张工",
+    "assign_type": "auto",
+    "assigner_id": null,
+    "assigned_at": "2026-06-23 00:29:35",
+    "accepted_at": null,
     "sla_response_deadline": "2026-06-23 01:29:35",
     "sla_resolve_deadline": "2026-06-23 08:29:35"
   }
@@ -1449,12 +1493,17 @@ POST /api/v1/tickets
 ```text
 1. ticket_no 由后端自动生成，格式：TK + yyyyMMdd + 4位序号，例如 TK202606230001；
 2. reporter_id 使用当前登录用户ID；
-3. 创建后 status = pending；
+3. 创建后系统自动尝试执行工单自动分配；
 4. 如果 asset_id 传入，必须校验资产是否存在；
 5. 后端根据 fault_type、priority 和启用状态 SLA 规则自动计算 sla_response_deadline、sla_resolve_deadline；
 6. SLA 第一版按自然时间计算，不排除工作日、节假日和上下班时间；
-7. 创建成功后写入 it_ticket_record，action = create；
-8. 创建成功后记录操作日志。
+7. 自动分配成功后 status = assigned，handler_id / assignee_id 写入处理人ID，assign_type = auto，assigned_at 写入当前时间，accepted_at 保持为空；
+8. 自动分配失败不会导致工单创建失败，工单 status = pending_accept，handler_id / assignee_id 为空，assign_type 为空；
+9. 自动分配成功会创建处理人待办事项并发送站内信；
+10. 自动分配失败会创建管理员待派单待办事项；
+11. 每次自动分配成功或失败都会写入 ticket_assignment_log；
+12. 创建成功后写入 it_ticket_record，action = create；
+13. 创建成功后记录操作日志。
 ```
 
 ---
@@ -1479,8 +1528,16 @@ GET /api/v1/tickets/{ticket_id}
     "title": "财务电脑无法开机",
     "description": "按下电源键后电脑无反应，显示器无信号。",
     "fault_type": "hardware",
+    "category_id": 1,
     "priority": "high",
     "status": "completed",
+    "assignee_id": 2,
+    "assignee_name": "张工",
+    "handler_id": 2,
+    "handler_name": "张工",
+    "assign_type": "manual",
+    "assigner_id": 1,
+    "assigner_name": "系统管理员",
     "reporter": {
       "id": 3,
       "real_name": "李明",
@@ -1504,6 +1561,7 @@ GET /api/v1/tickets/{ticket_id}
     "result": "重新插拔内存并清理主板灰尘后恢复正常。",
     "created_at": "2026-06-21 09:10:00",
     "assigned_at": "2026-06-21 09:20:00",
+    "accepted_at": "2026-06-21 09:20:00",
     "started_at": "2026-06-21 09:30:00",
     "completed_at": "2026-06-21 10:10:00",
     "sla_response_deadline": "2026-06-21 09:40:00",
@@ -1563,9 +1621,9 @@ PUT /api/v1/tickets/{ticket_id}
 业务规则：
 
 ```text
-1. 非 admin 用户只能修改自己创建且 status = pending 的工单；
+1. 非 admin 用户只能修改自己创建且 status = pending_accept 或 pending 的工单；
 2. RBAC 角色码包含 admin 的用户可以修改全部工单；
-3. processing、completed、cancelled 状态下，非 admin 用户不允许修改基础信息；
+3. assigned、processing、pending_confirm、completed、closed、cancelled 状态下，非 admin 用户不允许修改基础信息；
 4. 修改后记录操作日志。
 ```
 
@@ -1598,7 +1656,10 @@ PATCH /api/v1/tickets/{ticket_id}/assign
     "id": 1,
     "status": "assigned",
     "handler_id": 2,
+    "assignee_id": 2,
+    "assign_type": "manual",
     "assigned_at": "2026-06-23 10:00:00",
+    "accepted_at": null,
     "first_response_at": "2026-06-23 10:00:00"
   }
 }
@@ -1607,11 +1668,11 @@ PATCH /api/v1/tickets/{ticket_id}/assign
 业务规则：
 
 ```text
-1. 只有 pending 状态允许派单；
+1. pending_accept 或 pending 状态允许派单；
 2. handler_id 对应用户必须存在；
 3. handler 用户 role 必须为 it_staff 或 admin；
 4. 派单后 status = assigned；
-5. 更新 handler_id、assigned_at；
+5. 更新 handler_id / assignee_id、assigner_id、assign_type = manual、assigned_at；
 6. 如果 first_response_at 为空，则写入当前时间；如果已有值，不覆盖；
 7. 写入 it_ticket_record，action = assign；
 8. 记录操作日志。
@@ -1644,6 +1705,7 @@ PATCH /api/v1/tickets/{ticket_id}/start
   "data": {
     "id": 1,
     "status": "processing",
+    "accepted_at": "2026-06-23 10:15:00",
     "started_at": "2026-06-23 10:15:00",
     "first_response_at": "2026-06-23 10:00:00"
   }
@@ -1658,7 +1720,7 @@ PATCH /api/v1/tickets/{ticket_id}/start
 3. RBAC 角色码包含 admin 的用户可以开始处理任意 assigned 工单；
 4. 如果工单 handler_id 为空，IT 人员开始处理时自动设置 handler_id = 当前用户ID；
 5. 开始处理后 status = processing；
-6. 更新 started_at；
+6. 更新 accepted_at、started_at；
 7. 如果 first_response_at 为空，则写入当前时间；如果已有值，不覆盖；
 8. 如果工单关联了 asset_id，则将资产状态改为 repairing；
 9. 写入 it_ticket_record，action = start；
@@ -1768,9 +1830,9 @@ PATCH /api/v1/tickets/{ticket_id}/cancel
 业务规则：
 
 ```text
-1. 非 admin 用户只能取消自己创建且 status = pending 的工单；
-2. RBAC 角色码包含 admin 的用户可以取消 pending、assigned 状态工单；
-3. processing、completed 状态不允许取消；
+1. 非 admin 用户只能取消自己创建且 status = pending_accept 或 pending 的工单；
+2. RBAC 角色码包含 admin 的用户可以取消 pending_accept、pending、assigned 状态工单；
+3. processing、pending_confirm、completed、closed 状态不允许取消；
 4. 取消后 status = cancelled；
 5. 写入 it_ticket_record，action = cancel；
 6. 记录操作日志。
@@ -2090,7 +2152,7 @@ GET /api/v1/dashboard/summary
 
 ```text
 ticket_total：工单总数
-ticket_pending：pending 状态工单数量
+ticket_pending：pending_accept / pending 状态工单数量
 ticket_processing：processing 状态工单数量
 ticket_completed：completed 状态工单数量
 asset_total：资产总数
@@ -2966,10 +3028,14 @@ GET /api/v1/dicts
     "ticket_status": [
       {
         "label": "待受理",
+        "value": "pending_accept"
+      },
+      {
+        "label": "待派单",
         "value": "pending"
       },
       {
-        "label": "已派单",
+        "label": "已分配",
         "value": "assigned"
       },
       {
@@ -2977,8 +3043,16 @@ GET /api/v1/dicts
         "value": "processing"
       },
       {
+        "label": "待用户确认",
+        "value": "pending_confirm"
+      },
+      {
         "label": "已完成",
         "value": "completed"
+      },
+      {
+        "label": "已关闭",
+        "value": "closed"
       },
       {
         "label": "已取消",
@@ -3698,7 +3772,7 @@ timezone: Asia/Shanghai
 ```text
 只查询可能已经超时的工单，避免每次任务扫描全部工单。
 
-工单状态 NOT IN (completed, cancelled)
+工单状态 NOT IN (completed, closed, cancelled)
 并且满足以下任一条件：
 
 1. response_overdue = 0
@@ -4591,7 +4665,7 @@ DELETE /api/v1/work-groups/{group_id}/members/{user_id}
 | 打印机维护组 | printer | 打印机、复印机及耗材相关维护 |
 | 系统账号组 | account | 账号开通、权限申请和系统登录问题 |
 
-成员测试数据不在初始化 SQL 中硬编码，避免不同环境用户 ID 不一致。
+初始化 SQL 同时将现有测试用户 `it_zhang` 加入以上运维组，便于自动分配规则测试。
 
 ---
 
@@ -4637,26 +4711,522 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/work-groups/2/members/2" \
 
 ---
 
-# 21. 工单状态流转规则
+# 21. 工单自动分配 Ticket Assignment API
+
+工单自动分配用于在用户提交工单后，根据工单分类、优先级、自动分配规则、运维组和成员当前工作量，自动选择合适的 IT 运维人员。
+
+本阶段支持两种策略：
+
+```text
+least_workload：最少工单分配；
+fixed_user：固定人员分配。
+```
+
+说明：
+
+```text
+1. 自动分配模块依赖运维组，不依赖 RBAC 角色做业务分组；
+2. RBAC 仍只负责接口权限控制；
+3. 自动分配失败不会导致工单创建失败；
+4. 创建工单时自动分配是系统内部行为，普通用户不需要额外权限；
+5. 管理员维护规则和手动触发自动分配需要 RBAC 权限。
+```
+
+## 21.1 查询自动分配规则列表
+
+```http
+GET /api/v1/ticket-assignment-rules
+```
+
+权限：ticket:assignment-rule:list
+
+查询参数：
+
+| 参数            | 类型     | 必填 | 默认值 | 说明 |
+| --------------- | ------ | -- | --- | ---- |
+| name            | string | 否 | - | 规则名称模糊查询 |
+| category_id     | int    | 否 | - | 工单分类ID |
+| priority        | string | 否 | - | 优先级 |
+| ops_group_id    | int    | 否 | - | 运维组ID |
+| target_user_id  | int    | 否 | - | 固定处理人ID |
+| assign_strategy | string | 否 | - | least_workload / fixed_user |
+| enabled         | bool   | 否 | - | 是否启用 |
+| page            | int    | 否 | 1 | 页码 |
+| page_size       | int    | 否 | 10 | 每页数量，最大 100 |
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "name": "电脑故障自动分配规则",
+        "category_id": 1,
+        "priority": null,
+        "ops_group_id": 1,
+        "ops_group_name": "桌面运维组",
+        "assign_strategy": "least_workload",
+        "target_user_id": null,
+        "target_user_name": null,
+        "enabled": true,
+        "sort_order": 10,
+        "remark": "电脑故障分配给桌面运维组中当前工单最少的人",
+        "created_at": "2026-06-25 00:00:00",
+        "updated_at": "2026-06-25 00:00:00"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 10,
+    "pages": 1
+  }
+}
+```
+
+---
+
+## 21.2 新增自动分配规则
+
+```http
+POST /api/v1/ticket-assignment-rules
+```
+
+权限：ticket:assignment-rule:create
+
+least_workload 请求示例：
+
+```json
+{
+  "name": "网络故障自动分配规则",
+  "category_id": 2,
+  "priority": "normal",
+  "ops_group_id": 2,
+  "assign_strategy": "least_workload",
+  "target_user_id": null,
+  "enabled": true,
+  "sort_order": 10,
+  "remark": "普通网络故障分配给网络运维组中当前工单最少的人"
+}
+```
+
+fixed_user 请求示例：
+
+```json
+{
+  "name": "账号系统固定分配规则",
+  "category_id": null,
+  "priority": "urgent",
+  "ops_group_id": 4,
+  "assign_strategy": "fixed_user",
+  "target_user_id": 2,
+  "enabled": true,
+  "sort_order": 1,
+  "remark": "紧急账号系统故障固定分配给张工"
+}
+```
+
+字段说明：
+
+| 字段            | 类型     | 必填 | 默认值 | 说明 |
+| --------------- | ------ | -- | --- | ---- |
+| name            | string | 是 | - | 规则名称 |
+| category_id     | int    | 否 | null | 工单分类ID，空表示不限制分类 |
+| priority        | string | 否 | null | 优先级，空表示不限制优先级 |
+| ops_group_id    | int    | 条件必填 | null | 运维组ID，least_workload 必填 |
+| assign_strategy | string | 是 | - | least_workload / fixed_user |
+| target_user_id  | int    | 条件必填 | null | 固定处理人ID，fixed_user 必填 |
+| enabled         | bool   | 否 | true | 是否启用 |
+| sort_order      | int    | 否 | 100 | 排序值，越小越优先 |
+| remark          | string | 否 | null | 备注 |
+
+校验规则：
+
+```text
+1. assign_strategy 只能是 least_workload 或 fixed_user；
+2. least_workload 策略必须配置 ops_group_id；
+3. least_workload 策略会校验运维组存在且启用；
+4. fixed_user 策略必须配置 target_user_id；
+5. fixed_user 策略会校验用户存在、启用且具备 IT 运维人员角色；
+6. fixed_user 策略如果配置 ops_group_id，还会校验固定处理人属于该运维组且成员关系启用。
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "自动分配规则创建成功",
+  "data": {
+    "id": 1,
+    "name": "网络故障自动分配规则",
+    "category_id": 2,
+    "priority": "normal",
+    "ops_group_id": 2,
+    "ops_group_name": "网络运维组",
+    "assign_strategy": "least_workload",
+    "target_user_id": null,
+    "target_user_name": null,
+    "enabled": true,
+    "sort_order": 10,
+    "remark": "普通网络故障分配给网络运维组中当前工单最少的人",
+    "created_at": "2026-06-25 10:00:00",
+    "updated_at": "2026-06-25 10:00:00"
+  }
+}
+```
+
+---
+
+## 21.3 修改自动分配规则
+
+```http
+PUT /api/v1/ticket-assignment-rules/{rule_id}
+```
+
+权限：ticket:assignment-rule:update
+
+请求体字段同新增接口，支持传入部分字段。
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "自动分配规则修改成功",
+  "data": {
+    "id": 1,
+    "name": "网络故障自动分配规则",
+    "assign_strategy": "least_workload",
+    "enabled": true
+  }
+}
+```
+
+---
+
+## 21.4 启用或停用自动分配规则
+
+```http
+PATCH /api/v1/ticket-assignment-rules/{rule_id}/status
+```
+
+权限：ticket:assignment-rule:status
+
+请求体：
+
+```json
+{
+  "enabled": true
+}
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "自动分配规则状态修改成功",
+  "data": {
+    "id": 1,
+    "enabled": true
+  }
+}
+```
+
+---
+
+## 21.5 删除自动分配规则
+
+```http
+DELETE /api/v1/ticket-assignment-rules/{rule_id}
+```
+
+权限：ticket:assignment-rule:delete
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "自动分配规则删除成功",
+  "data": null
+}
+```
+
+---
+
+## 21.6 手动触发工单自动分配
+
+```http
+POST /api/v1/tickets/{ticket_id}/auto-assign
+```
+
+权限：ticket:auto-assign
+
+查询参数：
+
+| 参数  | 类型   | 必填 | 默认值 | 说明 |
+| ----- | ------ | -- | --- | ---- |
+| force | bool   | 否 | false | 是否强制重新自动分配 |
+
+请求示例：
+
+```http
+POST /api/v1/tickets/1001/auto-assign
+POST /api/v1/tickets/1001/auto-assign?force=true
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "success": true,
+    "ticket_id": 1001,
+    "assignee_id": 2,
+    "assignee_name": "张工",
+    "rule_id": 3,
+    "assign_type": "auto",
+    "assign_strategy": "least_workload",
+    "fail_stage": null,
+    "fail_reason": null
+  }
+}
+```
+
+自动分配失败响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "success": false,
+    "ticket_id": 1001,
+    "assignee_id": null,
+    "assignee_name": null,
+    "rule_id": null,
+    "assign_type": null,
+    "assign_strategy": null,
+    "fail_stage": "match_rule",
+    "fail_reason": "未匹配到可用自动分配规则"
+  }
+}
+```
+
+规则：
+
+```text
+1. force = false 时，如果工单已经有 handler_id / assignee_id，不允许重复自动分配；
+2. force = true 时，可以重新执行自动分配；
+3. force = true 且重新分配成功后，会取消旧处理人的 ticket_process 待办；
+4. force = true 且重新分配成功后，会给旧处理人发送“工单已重新分配”站内信；
+5. force = true 且自动分配失败时，不会清空原处理人；
+6. 每次手动触发自动分配都会写入 ticket_assignment_log。
+```
+
+---
+
+## 21.7 自动分配规则匹配逻辑
+
+创建工单或手动触发自动分配时，系统根据工单 `category_id` 和 `priority` 匹配启用规则。
+
+匹配优先级：
+
+```text
+1. category_id + priority 完全匹配；
+2. category_id 匹配，priority 为空；
+3. category_id 为空，priority 匹配；
+4. category_id 和 priority 都为空的全局默认规则；
+5. 多条规则命中时，sort_order ASC、id ASC。
+```
+
+伪 SQL：
+
+```sql
+SELECT *
+FROM ticket_assignment_rule
+WHERE enabled = 1
+  AND (category_id = :category_id OR category_id IS NULL)
+  AND (priority = :priority OR priority IS NULL)
+ORDER BY
+  CASE
+    WHEN category_id = :category_id AND priority = :priority THEN 0
+    WHEN category_id = :category_id AND priority IS NULL THEN 1
+    WHEN category_id IS NULL AND priority = :priority THEN 2
+    WHEN category_id IS NULL AND priority IS NULL THEN 3
+    ELSE 4
+  END ASC,
+  sort_order ASC,
+  id ASC
+LIMIT 1;
+```
+
+---
+
+## 21.8 least_workload 策略
+
+`least_workload` 表示从规则配置的运维组中选择当前未完成工单数量最少的可用成员。
+
+可用成员要求：
+
+```text
+1. 运维组存在且启用；
+2. 运维组成员关系启用；
+3. 用户账号存在且启用；
+4. 用户具备 IT 运维人员角色；
+5. 当前实现识别 it_staff / it_engineer 角色码为 IT 运维人员。
+```
+
+工作量统计状态：
+
+```text
+assigned
+processing
+pending_confirm
+```
+
+不统计：
+
+```text
+completed
+closed
+cancelled
+```
+
+选择规则：
+
+```text
+1. 未完成工单数量最少者优先；
+2. 工作量相同，最近 assigned_at 更早者优先；
+3. 仍相同，user_id 更小者优先；
+4. 没有历史分配记录的用户视为更早。
+```
+
+常见失败原因：
+
+```text
+匹配到规则但运维组不存在
+运维组已禁用
+运维组下没有可用成员
+所有成员账号均已禁用
+所有成员都不具备 IT 运维人员角色
+```
+
+---
+
+## 21.9 fixed_user 策略
+
+`fixed_user` 表示直接将工单分配给规则中的 `target_user_id`。
+
+校验规则：
+
+```text
+1. target_user_id 必须配置；
+2. target_user_id 对应用户必须存在；
+3. 用户账号必须启用；
+4. 用户必须具备 IT 运维人员角色；
+5. 如果规则配置 ops_group_id，则用户必须属于该运维组且成员关系启用。
+```
+
+说明：
+
+```text
+即使规则使用 fixed_user 策略，工单 assign_type 仍写入 auto；
+fixed_user 只记录在 ticket_assignment_rule 和 ticket_assignment_log 中。
+```
+
+常见失败原因：
+
+```text
+固定处理人未配置
+固定处理人不存在
+固定处理人账号已禁用
+固定处理人不是 IT 运维人员
+固定处理人不属于指定运维组
+```
+
+---
+
+## 21.10 自动分配日志
+
+每次自动分配都会写入 `ticket_assignment_log`。
+
+字段说明：
+
+| 字段            | 说明 |
+| --------------- | ---- |
+| ticket_id       | 工单ID |
+| rule_id         | 命中的规则ID，可为空 |
+| ops_group_id    | 运维组ID，可为空 |
+| assignee_id     | 最终处理人ID，可为空 |
+| assign_type     | 分配来源，自动分配成功时为 auto |
+| assign_strategy | 分配策略 |
+| success         | 是否成功，1成功，0失败 |
+| fail_stage      | 失败阶段 |
+| fail_reason     | 失败原因 |
+| created_at      | 创建时间 |
+
+失败阶段示例：
+
+```text
+match_rule
+check_group
+check_member
+check_user
+select_assignee
+apply_assignment
+unknown
+```
+
+---
+
+## 21.11 初始化数据
+
+初始化 SQL 包含以下自动分配规则示例：
+
+| 规则 | category_id | priority | 策略 | 运维组/用户 |
+| ---- | ----------- | -------- | ---- | ---------- |
+| 电脑故障自动分配规则 | 1 | 空 | least_workload | 桌面运维组 |
+| 网络故障自动分配规则 | 2 | 空 | least_workload | 网络运维组 |
+| 打印机故障自动分配规则 | 3 | 空 | least_workload | 打印机维护组 |
+| 账号系统固定分配规则 | 空 | urgent | fixed_user | 张工 |
+
+---
+
+# 22. 工单状态流转规则
 
 工单状态只能按照以下规则流转：
 
 ```text
-pending    -> assigned
-pending    -> cancelled
-assigned   -> processing
-assigned   -> cancelled
-processing -> completed
+pending_accept -> assigned
+pending_accept -> cancelled
+pending        -> assigned
+pending        -> cancelled
+assigned       -> processing
+assigned       -> cancelled
+processing     -> completed
+processing     -> pending_confirm
+pending_confirm -> completed
+pending_confirm -> closed
 ```
 
 禁止：
 
 ```text
-completed  -> 任意状态
-cancelled  -> 任意状态
-pending    -> completed
-assigned   -> completed
-processing -> cancelled
+completed      -> 任意状态
+closed         -> 任意状态
+cancelled      -> 任意状态
+pending_accept -> completed
+pending        -> completed
+assigned       -> completed
+processing     -> cancelled
 ```
 
 如果状态流转非法，返回：
@@ -4671,9 +5241,9 @@ processing -> cancelled
 
 ---
 
-# 22. 后端实现要求
+# 23. 后端实现要求
 
-## 22.1 FastAPI 路由建议
+## 23.1 FastAPI 路由建议
 
 建议拆分以下 router：
 
@@ -4690,6 +5260,7 @@ app/api/v1/routers/dicts.py
 app/api/v1/routers/faqs.py
 app/api/v1/routers/notifications.py
 app/api/v1/routers/sla_rules.py
+app/api/v1/routers/ticket_assignment_rules.py
 app/api/v1/routers/todos.py
 app/api/v1/routers/work_groups.py
 app/routers/rbac.py
@@ -4699,7 +5270,7 @@ app/scheduler/jobs.py
 
 ---
 
-## 22.2 定时任务目录建议
+## 23.2 定时任务目录建议
 
 建议将 APScheduler 相关代码拆分到独立目录：
 
@@ -4714,7 +5285,7 @@ app/scheduler/jobs.py        定时任务入口
 
 ---
 
-## 22.3 Service 层建议
+## 23.3 Service 层建议
 
 建议拆分以下 service：
 
@@ -4730,13 +5301,14 @@ app/services/faq_service.py
 app/services/notification_service.py
 app/services/rbac_service.py
 app/services/sla_service.py
+app/services/ticket_assignment_service.py
 app/services/todo_service.py
 app/services/work_group_service.py
 ```
 
 ---
 
-## 22.4 数据模型建议
+## 23.4 数据模型建议
 
 建议拆分以下 model：
 
@@ -4752,13 +5324,14 @@ app/models/faq.py
 app/models/notification.py
 app/models/rbac.py
 app/models/sla_rule.py
+app/models/ticket_assignment.py
 app/models/todo.py
 app/models/work_group.py
 ```
 
 ---
 
-## 22.5 Pydantic Schema 建议
+## 23.5 Pydantic Schema 建议
 
 建议拆分以下 schema：
 
@@ -4773,13 +5346,14 @@ app/schemas/faq_schema.py
 app/schemas/notification_schema.py
 app/schemas/rbac_schema.py
 app/schemas/sla_rule_schema.py
+app/schemas/ticket_assignment_schema.py
 app/schemas/todo_schema.py
 app/schemas/work_group_schema.py
 ```
 
 ---
 
-## 22.6 统一响应工具
+## 23.6 统一响应工具
 
 请封装统一响应方法：
 
@@ -4801,7 +5375,7 @@ def fail(code=40000, message="操作失败", data=None):
 
 ---
 
-## 22.7 权限校验要求
+## 23.7 权限校验要求
 
 需要实现依赖函数：
 
@@ -4828,7 +5402,7 @@ sys_user.role 可以继续作为用户基础信息字段返回；
 
 ---
 
-## 22.8 定时任务配置要求
+## 23.8 定时任务配置要求
 
 依赖要求：
 
@@ -4861,7 +5435,7 @@ SLA_CHECK_INTERVAL_MINUTES=5
 
 ---
 
-## 22.9 操作日志要求
+## 23.9 操作日志要求
 
 以下操作必须写入 sys_operation_log：
 
@@ -4907,6 +5481,11 @@ SLA_CHECK_INTERVAL_MINUTES=5
 添加运维组成员
 修改运维组成员
 移除运维组成员
+创建自动分配规则
+修改自动分配规则
+启用停用自动分配规则
+删除自动分配规则
+手动触发工单自动分配
 ```
 
 日志字段：

@@ -14,6 +14,12 @@ from app.models.ticket import (
     TicketRecord,
     TicketStatus,
 )
+from app.models.ticket_assignment import (
+    TicketAssignmentLog,
+    TicketAssignmentRule,
+    TicketAssignStrategy,
+    TicketAssignType,
+)
 from app.models.todo import Todo, TodoPriority, TodoStatus, TodoType
 from app.models.user import User, UserRole
 from app.models.work_group import WorkGroup, WorkGroupMember, WorkGroupMemberRole
@@ -36,6 +42,10 @@ __all__ = [
     "SlaRule",
     "Ticket",
     "TicketAction",
+    "TicketAssignmentLog",
+    "TicketAssignmentRule",
+    "TicketAssignStrategy",
+    "TicketAssignType",
     "TicketFaultType",
     "TicketPriority",
     "TicketRecord",

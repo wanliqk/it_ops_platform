@@ -36,9 +36,12 @@ class TicketPriority(StrEnum):
 
 class TicketStatus(StrEnum):
     PENDING = "pending"
+    PENDING_ACCEPT = "pending_accept"
     ASSIGNED = "assigned"
     PROCESSING = "processing"
+    PENDING_CONFIRM = "pending_confirm"
     COMPLETED = "completed"
+    CLOSED = "closed"
     CANCELLED = "cancelled"
 
 
@@ -69,6 +72,7 @@ class Ticket(Base):
     title: Mapped[str] = mapped_column(String(100))
     description: Mapped[str] = mapped_column(Text)
     fault_type: Mapped[TicketFaultType | None] = mapped_column(String(50), default=None)
+    category_id: Mapped[int | None] = mapped_column(BigInteger, default=None, index=True)
     priority: Mapped[TicketPriority] = mapped_column(String(20), default=TicketPriority.NORMAL)
     status: Mapped[TicketStatus] = mapped_column(String(30), default=TicketStatus.PENDING)
     reporter_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("sys_user.id"))
@@ -84,7 +88,14 @@ class Ticket(Base):
     )
     result: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    assigner_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("sys_user.id"),
+        default=None,
+    )
+    assign_type: Mapped[str | None] = mapped_column(String(30), default=None)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     sla_response_deadline: Mapped[datetime | None] = mapped_column(DateTime, default=None)
@@ -109,9 +120,18 @@ class Ticket(Base):
         back_populates="handled_tickets",
         foreign_keys=[handler_id],
     )
+    assigner = relationship("User", foreign_keys=[assigner_id])
     asset = relationship("Asset", back_populates="tickets")
     records = relationship("TicketRecord", back_populates="ticket")
     repair_records = relationship("RepairRecord", back_populates="ticket")
+
+    @property
+    def assignee_id(self) -> int | None:
+        return self.handler_id
+
+    @assignee_id.setter
+    def assignee_id(self, value: int | None) -> None:
+        self.handler_id = value
 
 
 class TicketRecord(Base):

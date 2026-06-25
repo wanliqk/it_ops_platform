@@ -12,6 +12,7 @@ from app.api.v1.routes import (
     operation_logs,
     repair_records,
     sla_rules,
+    ticket_assignment_rules,
     tickets,
     todos,
     users,
@@ -31,6 +32,11 @@ api_router.include_router(
 )
 api_router.include_router(assets.router, prefix="/assets", tags=["assets"])
 api_router.include_router(tickets.router, prefix="/tickets", tags=["tickets"])
+api_router.include_router(
+    ticket_assignment_rules.router,
+    prefix="/ticket-assignment-rules",
+    tags=["ticket-assignment-rules"],
+)
 api_router.include_router(todos.router, prefix="/todos", tags=["todos"])
 api_router.include_router(work_groups.router, prefix="/work-groups", tags=["work-groups"])
 api_router.include_router(faqs.router, prefix="/faqs", tags=["faqs"])

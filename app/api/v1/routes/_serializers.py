@@ -78,6 +78,7 @@ def ticket_dict(ticket: Any) -> dict[str, Any]:
             "title",
             "description",
             "fault_type",
+            "category_id",
             "priority",
             "status",
             "reporter_id",
@@ -85,7 +86,10 @@ def ticket_dict(ticket: Any) -> dict[str, Any]:
             "asset_id",
             "result",
             "created_at",
+            "assigner_id",
+            "assign_type",
             "assigned_at",
+            "accepted_at",
             "started_at",
             "completed_at",
             "sla_response_deadline",
@@ -97,8 +101,11 @@ def ticket_dict(ticket: Any) -> dict[str, Any]:
             "updated_at",
         ],
     )
+    data["assignee_id"] = ticket.handler_id
     data["reporter_name"] = ticket.reporter.real_name if ticket.reporter else None
     data["handler_name"] = ticket.handler.real_name if ticket.handler else None
+    data["assignee_name"] = data["handler_name"]
+    data["assigner_name"] = ticket.assigner.real_name if ticket.assigner else None
     data["asset_no"] = ticket.asset.asset_no if ticket.asset else None
     data["asset_name"] = ticket.asset.asset_name if ticket.asset else None
     return data

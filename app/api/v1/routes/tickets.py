@@ -16,6 +16,7 @@ from app.schemas.ticket import (
     TicketUpdate,
 )
 from app.services.log_service import LogService
+from app.services.ticket_assignment_service import TicketAssignmentService
 from app.services.ticket_service import TicketConflictError, TicketService
 from app.utils.permissions import get_user_role_codes
 
@@ -32,6 +33,7 @@ TicketCompleter = Annotated[User, Depends(require_permissions("ticket:complete")
 TicketCanceller = Annotated[User, Depends(require_permissions("ticket:cancel"))]
 TicketDeleter = Annotated[User, Depends(require_permissions("ticket:delete"))]
 TicketRecordReader = Annotated[User, Depends(require_permissions("ticket:records"))]
+TicketAutoAssigner = Annotated[User, Depends(require_permissions("ticket:auto-assign"))]
 
 
 @router.get("")
@@ -82,6 +84,37 @@ def create_ticket(
     )
     db.commit()
     return success(ticket_dict(ticket), "工单创建成功")
+
+
+@router.post("/{ticket_id}/auto-assign")
+def auto_assign_ticket(
+    ticket_id: int,
+    db: DBSession,
+    request: Request,
+    current_user: TicketAutoAssigner,
+    force: bool = False,
+) -> dict:
+    ticket = TicketService(db).get(ticket_id)
+    if ticket is None:
+        raise APIException("资源不存在", status.HTTP_404_NOT_FOUND, 40400)
+    service = TicketAssignmentService(db)
+    result = service.auto_assign_ticket(
+        ticket,
+        force=force,
+        mutate_on_failure=ticket.handler_id is None,
+        preserve_existing_on_failure=True,
+    )
+    LogService(db).record(
+        user_id=current_user.id,
+        module_name="工单自动分配",
+        operation_type="auto_assign",
+        business_id=ticket_id,
+        request=request,
+        operation_result="success" if result.success else "fail",
+        error_message=result.fail_reason,
+    )
+    db.commit()
+    return success(service.result_dict(ticket, result))
 
 
 @router.get("/{ticket_id}")

@@ -146,7 +146,9 @@ class SlaService:
             self.db.scalars(
                 select(Ticket)
                 .where(
-                    Ticket.status.notin_([TicketStatus.COMPLETED, TicketStatus.CANCELLED]),
+                    Ticket.status.notin_(
+                        [TicketStatus.COMPLETED, TicketStatus.CLOSED, TicketStatus.CANCELLED]
+                    ),
                     or_(
                         and_(
                             Ticket.response_overdue == 0,

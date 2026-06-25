@@ -270,12 +270,14 @@ class TodoService:
         business_type: str,
         business_id: int,
         todo_type: str | None = None,
+        assignee_id: int | None = None,
         remark: str | None = None,
     ) -> int:
         todos = self._active_business_todos(
             business_type=business_type,
             business_id=business_id,
             todo_type=todo_type,
+            assignee_id=assignee_id,
         )
         for todo in todos:
             self._cancel_todo(todo, remark=remark)

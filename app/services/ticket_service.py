@@ -25,6 +25,7 @@ from app.schemas.ticket import (
     TicketUpdate,
 )
 from app.services.sla_service import SlaService
+from app.services.ticket_assignment_service import TicketAssignmentService
 from app.services.todo_service import TodoService
 from app.utils.permissions import get_user_permission_codes, get_user_role_codes
 from app.utils.timezone import local_now
@@ -55,15 +56,19 @@ class TicketService:
         ticket = Ticket(**data)
         self.db.add(ticket)
         self.db.flush()
-        TodoService(self.db).create_ticket_assign_todos(ticket, created_by=ticket.reporter_id)
+        assignment_result = TicketAssignmentService(self.db).auto_assign_ticket(ticket)
         self.db.add(
             TicketRecord(
                 ticket_id=ticket.id,
                 operator_id=ticket.reporter_id,
                 from_status=None,
-                to_status=TicketStatus.PENDING,
+                to_status=ticket.status,
                 action=TicketAction.CREATE,
-                remark="用户提交报修工单",
+                remark=(
+                    "用户提交报修工单，系统自动分配成功"
+                    if assignment_result.success
+                    else f"用户提交报修工单，自动分配失败：{assignment_result.fail_reason}"
+                ),
             )
         )
         self.db.commit()
@@ -147,16 +152,21 @@ class TicketService:
         ticket = self.get(ticket_id)
         if ticket is None:
             return None
-        self._ensure_status(ticket.status, TicketStatus.PENDING)
+        if ticket.status not in {TicketStatus.PENDING, TicketStatus.PENDING_ACCEPT}:
+            raise TicketConflictError
+        before_status = ticket.status
         ticket.handler_id = payload.handler_id
+        ticket.assigner_id = operator_id
+        ticket.assign_type = "manual"
         ticket.status = TicketStatus.ASSIGNED
         now = local_now()
         ticket.assigned_at = now
+        ticket.accepted_at = None
         self._apply_sla_flow_timestamps(ticket, TicketStatus.ASSIGNED, now)
         self._add_record(
             ticket,
             operator_id,
-            TicketStatus.PENDING,
+            before_status,
             TicketStatus.ASSIGNED,
             TicketAction.ASSIGN,
             payload.remark,
@@ -175,8 +185,10 @@ class TicketService:
             raise PermissionError
         if ticket.handler_id is None:
             ticket.handler_id = operator.id
+            ticket.assign_type = "claim"
         ticket.status = TicketStatus.PROCESSING
         now = local_now()
+        ticket.accepted_at = now
         ticket.started_at = now
         self._apply_sla_flow_timestamps(ticket, TicketStatus.PROCESSING, now)
         self._add_record(

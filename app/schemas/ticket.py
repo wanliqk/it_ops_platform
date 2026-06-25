@@ -16,6 +16,7 @@ class TicketBase(BaseModel):
     title: str
     description: str
     fault_type: TicketFaultType | None = None
+    category_id: int | None = None
     priority: TicketPriority = TicketPriority.NORMAL
     reporter_id: int | None = None
     handler_id: int | None = None
@@ -31,12 +32,16 @@ class TicketUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     fault_type: TicketFaultType | None = None
+    category_id: int | None = None
     priority: TicketPriority | None = None
     status: TicketStatus | None = None
     handler_id: int | None = None
     asset_id: int | None = None
     result: str | None = None
+    assigner_id: int | None = None
+    assign_type: str | None = None
     assigned_at: datetime | None = None
+    accepted_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
@@ -69,7 +74,10 @@ class TicketRead(TicketBase):
     ticket_no: str
     status: TicketStatus
     created_at: datetime
+    assigner_id: int | None = None
+    assign_type: str | None = None
     assigned_at: datetime | None
+    accepted_at: datetime | None = None
     started_at: datetime | None
     completed_at: datetime | None
     sla_response_deadline: datetime | None

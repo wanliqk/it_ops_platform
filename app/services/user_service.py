@@ -20,8 +20,10 @@ from app.schemas.user import UserCreate, UserUpdate
 
 UNFINISHED_TICKET_STATUSES = {
     TicketStatus.PENDING,
+    TicketStatus.PENDING_ACCEPT,
     TicketStatus.ASSIGNED,
     TicketStatus.PROCESSING,
+    TicketStatus.PENDING_CONFIRM,
 }
 
 

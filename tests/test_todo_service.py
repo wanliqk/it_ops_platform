@@ -20,6 +20,7 @@ from app.models import __all__ as _model_exports
 from app.schemas.ticket import TicketAssign, TicketComplete, TicketCreate, TicketStart
 from app.services.ticket_service import TicketService
 from app.services.todo_service import TodoService
+from app.utils.timezone import local_now
 
 _ = _model_exports
 DEFAULT_HASH = "md5$e10adc3949ba59abbe56e057f20f883e"
@@ -173,7 +174,7 @@ def test_check_todo_timeout_expires_todo_and_sends_notification(db_session: Sess
 
 
 def test_my_statistics_counts_current_user_todos(db_session: Session) -> None:
-    now = datetime.now()
+    now = local_now().replace(hour=12, minute=0, second=0, microsecond=0)
     service = TodoService(db_session)
     service.create_for_business(
         title="pending",

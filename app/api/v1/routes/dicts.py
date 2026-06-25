@@ -19,10 +19,13 @@ def dicts(_: Annotated[User, Depends(require_permissions("dict:view"))]) -> dict
                 {"label": "普通员工", "value": "employee"},
             ],
             "ticket_status": [
-                {"label": "待受理", "value": "pending"},
-                {"label": "已派单", "value": "assigned"},
+                {"label": "待受理", "value": "pending_accept"},
+                {"label": "待派单", "value": "pending"},
+                {"label": "已分配", "value": "assigned"},
                 {"label": "处理中", "value": "processing"},
+                {"label": "待用户确认", "value": "pending_confirm"},
                 {"label": "已完成", "value": "completed"},
+                {"label": "已关闭", "value": "closed"},
                 {"label": "已取消", "value": "cancelled"},
             ],
             "ticket_priority": [
